@@ -17,6 +17,7 @@ import ReasoningWebJs from "./ReasoningWeb";
 import ShaderBackgroundJs from "./ShaderBackground";
 import OrbStatusBar from "./OrbStatusBar";
 import { useMicEnergy } from "./useMicEnergy";
+import ChatHud from "./ChatHud";
 
 const HolographicHumanoid = dynamic(() => import("./HolographicHumanoid"), { ssr: false });
 
@@ -243,15 +244,27 @@ export default function ApexWorld() {
   // backdrop, the light-cast and the reasoning web's activity level.
   const [showState, setShowState] = useState<OrbState>("idle");
   const showTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const orbState: OrbState = showState;
+  const chatBusy = useRef(false);
+  const orbState: OrbState = showState === "idle" && micOn ? "listening" : showState;
 
   const boost = () => {
-    const next: OrbState = showState === "idle" ? "thinking" : showState === "thinking" ? "speaking" : "idle";
+    if (chatBusy.current) return;
+    const next: OrbState =
+      showState === "idle" || showState === "listening"
+        ? "thinking"
+        : showState === "thinking"
+          ? "speaking"
+          : "idle";
     setShowState(next);
     if (showTimer.current) clearTimeout(showTimer.current);
     showTimer.current = setTimeout(() => setShowState("idle"), 8000);
   };
   useEffect(() => () => { if (showTimer.current) clearTimeout(showTimer.current); }, []);
+
+  const setChatOrb = (s: OrbState) => {
+    if (showTimer.current) clearTimeout(showTimer.current);
+    setShowState(s);
+  };
 
   // Single entry point for opening an agent, shared by the SVG graph and the
   // hidden accessible list, so both routes behave identically.
@@ -349,21 +362,12 @@ export default function ApexWorld() {
         }}
       />
 
-      {/* equalizer + STANDBY cluster */}
-      <button
-        type="button"
-        onClick={() => setMicOn((v) => !v)}
-        style={{
-          position: "absolute", left: "50%", bottom: 92, transform: "translateX(-50%)", zIndex: 5,
-          fontFamily: "var(--font-mono)", fontSize: "0.7rem", letterSpacing: "0.18em", textTransform: "uppercase",
-          color: micOn ? "#041018" : "rgba(240,237,232,0.85)",
-          background: micOn ? "#1ec8ff" : "rgba(4,8,15,0.55)",
-          border: "1px solid rgba(30,200,255,0.45)", borderRadius: 999, padding: "8px 16px",
-          cursor: "pointer", backdropFilter: "blur(8px)",
-        }}
-      >
-        {micOn ? "Mic on — holographic react" : "Enable mic"}
-      </button>
+      <ChatHud
+        micOn={micOn}
+        onMicChange={setMicOn}
+        onOrbState={setChatOrb}
+        onBusy={(busy) => { chatBusy.current = busy; }}
+      />
 
       <OrbStatusBar state={orbState} />
 
