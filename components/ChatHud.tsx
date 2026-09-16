@@ -74,10 +74,9 @@ export default function ChatHud({ micOn, onMicChange, onOrbState, onBusy }: Prop
         const data = (await res.json()) as { text?: string; error?: string };
         if (!res.ok || !data.text) {
           const msg =
-            data.error ||
-            (res.status === 503
-              ? "Jarvis brain is offline — add GEMINI_API_KEY or OPENAI_API_KEY on the server."
-              : "Jarvis could not reply.");
+            res.status === 503
+              ? "Jarvis brain is offline — add GEMINI_API_KEY or OPENAI_API_KEY on the server, then redeploy."
+              : data.error || "Jarvis could not reply.";
           setTurns((prev) => [...prev, { id: `e-${Date.now()}`, role: "assistant", content: msg }]);
           finishSpeak();
           setPending(false);
@@ -131,7 +130,7 @@ export default function ChatHud({ micOn, onMicChange, onOrbState, onBusy }: Prop
       style={{
         position: "absolute",
         left: "50%",
-        bottom: 136,
+        bottom: 108,
         transform: "translateX(-50%)",
         width: "min(560px, 94vw)",
         zIndex: 22,
@@ -150,23 +149,19 @@ export default function ChatHud({ micOn, onMicChange, onOrbState, onBusy }: Prop
           overflow: "hidden",
         }}
       >
+        {(turns.length > 0 || pending) && (
         <div
           ref={listRef}
           className="jarvis-hud-log"
           aria-live="polite"
           style={{
             overflowY: "auto",
-            padding: turns.length || pending ? "10px 12px 6px" : 0,
+            padding: "10px 12px 6px",
             display: "flex",
             flexDirection: "column",
             gap: 8,
           }}
         >
-          {turns.length === 0 && !pending && (
-            <div style={{ padding: "10px 12px 0", fontSize: 11, letterSpacing: "0.04em", color: "rgba(240,237,232,0.45)" }}>
-              Speak or type to Jarvis — Arabic and English both work.
-            </div>
-          )}
           {turns.map((t) => (
             <div key={t.id} style={{ display: "flex", justifyContent: t.role === "user" ? "flex-end" : "flex-start" }}>
               <div
@@ -192,6 +187,7 @@ export default function ChatHud({ micOn, onMicChange, onOrbState, onBusy }: Prop
             </div>
           )}
         </div>
+        )}
 
         <form
           onSubmit={(e) => {

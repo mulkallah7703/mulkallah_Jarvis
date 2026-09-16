@@ -60,9 +60,9 @@ body {
   color: rgba(240, 237, 232, 0.38);
 }
 .jarvis-hud-log {
-  max-height: 148px;
+  max-height: 110px;
   overflow-y: auto;
 }
 @media (max-width: 700px) {
-  .jarvis-hud-log { max-height: 96px; }
+  .jarvis-hud-log { max-height: 80px; }
 }
