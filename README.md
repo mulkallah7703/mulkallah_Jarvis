@@ -7,30 +7,49 @@ Built on the open **APEX-UI** framework (MIT), with a **custom particle humanoid
 ## Features
 - APEX-style HUD, agent graph, shader backdrop
 - Original Three.js holographic bust (procedural particles)
-- Mic-reactive glow (Enable mic)
-- Tap the center to cycle idle → thinking → speaking
+- Chat HUD: type a message and get a reply (Gemini primary, OpenAI fallback)
+- Voice: mic captures speech (Web Speech API in Chrome / Edge / Safari) and Jarvis can speak replies (browser `speechSynthesis`)
+- Core / humanoid state: listening → thinking → speaking → standby
 
 ## Run locally
 
 ```bash
 npm install
+cp .env.example .env.local   # then paste keys — never commit this file
 npm run dev
 ```
 
 Open http://localhost:3000
 
+Type in the bottom glass bar, or tap **Mic** and speak. Use **EN mic / AR mic** to switch recognition language. Toggle **Voice replies** if you only want text.
+
 ## Environment variables
 
-For the **visual UI only**, no API keys are required.
-
-Later (voice / chat brain), you will need:
+Keys stay on the server (`app/api/chat`). Do not prefix them with `NEXT_PUBLIC_`.
 
 | Variable | Purpose |
 |---|---|
-| `GEMINI_API_KEY` | Google Gemini (Live / chat) — get from https://aistudio.google.com/apikey |
-| `OPENAI_API_KEY` | Optional alternative LLM / TTS |
+| `GEMINI_API_KEY` | Google Gemini (preferred) — https://aistudio.google.com/apikey |
+| `GOOGLE_GENERATIVE_AI_API_KEY` | Same Gemini key, alternate name — used if `GEMINI_API_KEY` is unset |
+| `OPENAI_API_KEY` | Fallback LLM if Gemini fails |
 
-Do **not** commit keys. Use Vercel Project → Settings → Environment Variables, or a local `.env.local`.
+On Vercel: Project → Settings → Environment Variables (Production / Preview / Development).
+
+### Check the brain route
+
+```bash
+# missing body → 400
+curl -sS -o /tmp/j.json -w "%{http_code}\n" -X POST https://YOUR-APP.vercel.app/api/chat \
+  -H 'content-type: application/json'
+
+# health (no secrets) — { "ok": true, "configured": true|false }
+curl -sS https://YOUR-APP.vercel.app/api/chat
+
+# with a message → 200 when keys are set
+curl -sS https://YOUR-APP.vercel.app/api/chat \
+  -H 'content-type: application/json' \
+  -d '{"messages":[{"role":"user","content":"Say hi in one sentence."}]}'
+```
 
 ## Deploy (Vercel)
 
@@ -39,7 +58,7 @@ npm run build
 vercel --prod
 ```
 
-Or connect this GitHub repo in the Vercel dashboard (Framework: Next.js).
+Or connect this GitHub repo in the Vercel dashboard (Framework: Next.js). After merge to `main`, Production auto-deploys.
 
 ## Credits
 - Base UI: [RubenM1990/APEX-UI](https://github.com/RubenM1990/APEX-UI) (MIT) — see `CREDITS.md`
