@@ -1,7 +1,7 @@
 {
   "name": "mulkallah-jarvis",
   "version": "1.0.0",
-  "description": "Mulkallah Jarvis \u2014 holographic AI assistant UI (APEX-UI base + portrait hologram)",
+  "description": "Mulkallah Jarvis \u2014 holographic AI assistant UI (APEX-UI base + custom particle humanoid)",
   "license": "MIT",
   "private": false,
   "scripts": {

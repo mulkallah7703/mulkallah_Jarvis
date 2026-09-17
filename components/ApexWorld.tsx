@@ -11,13 +11,15 @@
  */
 
 import { useEffect, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import { type OrbState } from "./ApexHeroOrb";
 import ReasoningWebJs from "./ReasoningWeb";
 import ShaderBackgroundJs from "./ShaderBackground";
 import OrbStatusBar from "./OrbStatusBar";
 import { useMicEnergy } from "./useMicEnergy";
 import ChatHud from "./ChatHud";
-import JarvisHologram from "./JarvisHologram";
+
+const HolographicHumanoid = dynamic(() => import("./HolographicHumanoid"), { ssr: false });
 
 export type NodeSel = { name: string; key: string; color: string };
 
@@ -336,10 +338,10 @@ export default function ApexWorld() {
         </ul>
       </nav>
 
-      {/* the core — provided hologram portrait (not the old particle bust);
-          display-only; the tap disc below keeps agent nodes clickable */}
-      <div style={{ position: "absolute", left: "50%", top: "50%", width: "min(960px, 92vw)", height: "min(540px, 62vh)", transform: "translate(-50%, -52%)", zIndex: 3, pointerEvents: "none" }}>
-        <JarvisHologram
+      {/* the core - painted ABOVE the web (app order); display-only, the tap target
+          is the circular disc below so agent nodes near the ring stay clickable */}
+      <div style={{ position: "absolute", left: "50%", top: "50%", width: "min(560px, 70vw)", height: "min(620px, 78vw, 78vh)", transform: "translate(-50%, -52%)", zIndex: 3, pointerEvents: "none" }}>
+        <HolographicHumanoid
           mode={orbState === "thinking" ? "thinking" : orbState === "speaking" ? "speaking" : (micOn ? "listening" : "idle")}
           energy={Math.max(energy, orbState === "speaking" ? 0.55 : orbState === "thinking" ? 0.3 : 0)}
         />
