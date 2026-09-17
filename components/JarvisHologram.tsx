@@ -37,7 +37,7 @@ export default function JarvisHologram({
         className="jarvis-holo-art"
         src="/jarvis-hologram.png"
         alt=""
-        width={1672}
+        width={780}
         height={319}
         draggable={false}
       />

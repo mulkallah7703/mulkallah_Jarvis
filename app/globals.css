@@ -242,8 +242,6 @@ body {
   object-position: center;
   opacity: var(--holo-opacity);
   mix-blend-mode: screen;
-  -webkit-mask-image: radial-gradient(ellipse 55% 95% at 50% 58%, #000 36%, transparent 78%);
-  mask-image: radial-gradient(ellipse 55% 95% at 50% 58%, #000 36%, transparent 78%);
   filter:
     drop-shadow(0 0 18px rgba(0, 229, 255, calc(var(--holo-glow) * 0.85)))
     drop-shadow(0 0 42px rgba(30, 200, 255, calc(var(--holo-glow) * 0.45)));
@@ -251,7 +249,7 @@ body {
 }
 .jarvis-holo-scan {
   position: absolute;
-  inset: 0;
+  inset: 12% 18%;
   z-index: 2;
   pointer-events: none;
   background: repeating-linear-gradient(
@@ -262,9 +260,9 @@ body {
     transparent 4px
   );
   mix-blend-mode: screen;
-  opacity: calc(0.18 + var(--holo-energy) * 0.16);
-  -webkit-mask-image: radial-gradient(ellipse 48% 88% at 50% 58%, #000 32%, transparent 72%);
-  mask-image: radial-gradient(ellipse 48% 88% at 50% 58%, #000 32%, transparent 72%);
+  opacity: calc(0.16 + var(--holo-energy) * 0.14);
+  -webkit-mask-image: radial-gradient(ellipse 70% 80% at 50% 55%, #000 40%, transparent 78%);
+  mask-image: radial-gradient(ellipse 70% 80% at 50% 55%, #000 40%, transparent 78%);
 }
 .jarvis-holo-scan::after {
   content: "";
