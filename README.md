@@ -2,11 +2,11 @@
 
 Holographic AI assistant UI for [mulkallah7703/mulkallah_Jarvis](https://github.com/mulkallah7703/mulkallah_Jarvis).
 
-Built on the open **APEX-UI** framework (MIT), with a **custom particle humanoid** (blue body + orange core) inspired by the Astra/Apex reel look — not the paid Humanoid kit.
+Built on the open **APEX-UI** framework (MIT), with a **center hologram portrait** (`public/jarvis-hologram.png`) instead of a procedural particle mesh.
 
 ## Features
 - APEX-style HUD, agent graph, shader backdrop
-- Original Three.js holographic bust (procedural particles)
+- Center hologram: the provided particle-portrait artwork, served as a static PNG
 - Chat HUD: type a message and get a reply (Gemini primary, OpenAI fallback)
 - Voice: mic captures speech (Web Speech API in Chrome / Edge / Safari) and Jarvis can speak replies (browser `speechSynthesis`)
 - Core / humanoid state: listening → thinking → speaking → standby
@@ -62,4 +62,4 @@ Or connect this GitHub repo in the Vercel dashboard (Framework: Next.js). After 
 
 ## Credits
 - Base UI: [RubenM1990/APEX-UI](https://github.com/RubenM1990/APEX-UI) (MIT) — see `CREDITS.md`
-- Humanoid face: original Mulkallah Jarvis procedural particle mesh
+- Hologram face: `public/jarvis-hologram.png` (static portrait artwork)
