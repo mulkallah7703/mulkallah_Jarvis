@@ -21,7 +21,7 @@ npm run dev
 
 Open http://localhost:3000
 
-Type in the bottom glass bar, or tap **Mic** and speak. Use **EN mic / AR mic** to switch recognition language. Toggle **Voice replies** if you only want text.
+Open chat from the **right-side comms button**. The **mic** stays on that same right stack and works even when chat is closed. Use **EN mic / AR mic** inside the panel to switch recognition language. Toggle **Voice replies** if you only want text.
 
 ## Environment variables
 

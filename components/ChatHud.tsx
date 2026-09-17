@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { MessageSquare, Mic, MicOff, X } from "lucide-react";
 import type { OrbState } from "./ApexHeroOrb";
 import { speakText, speechSupported, useSpeechInput } from "./useSpeechInput";
 
@@ -16,7 +17,50 @@ type Props = {
   onBusy: (busy: boolean) => void;
 };
 
+function RailBtn({
+  label,
+  pressed,
+  expanded,
+  controls,
+  onClick,
+  accent = CYAN,
+  badge,
+  children,
+}: {
+  label: string;
+  pressed?: boolean;
+  expanded?: boolean;
+  controls?: string;
+  onClick: () => void;
+  accent?: string;
+  badge?: boolean;
+  children: ReactNode;
+}) {
+  const lit = Boolean(pressed || expanded);
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      aria-pressed={pressed}
+      aria-expanded={expanded}
+      aria-controls={controls}
+      onClick={onClick}
+      className="jarvis-rail-btn"
+      style={{
+        color: lit ? "#041018" : accent,
+        background: lit ? accent : "rgba(4, 8, 15, 0.78)",
+        borderColor: `${accent}80`,
+        boxShadow: lit ? `0 0 20px ${accent}70, 0 0 4px ${accent}` : `0 0 16px ${accent}28`,
+      }}
+    >
+      {children}
+      {badge && <span className="jarvis-rail-badge" aria-hidden="true" />}
+    </button>
+  );
+}
+
 export default function ChatHud({ micOn, onMicChange, onOrbState, onBusy }: Props) {
+  const [open, setOpen] = useState(false);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [draft, setDraft] = useState("");
   const [pending, setPending] = useState(false);
@@ -26,6 +70,7 @@ export default function ChatHud({ micOn, onMicChange, onOrbState, onBusy }: Prop
   const [srOk, setSrOk] = useState(false);
   const [muteMic, setMuteMic] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const pendingRef = useRef(false);
   const speakStop = useRef<(() => void) | null>(null);
   const sendRef = useRef<(text: string) => void>(() => {});
@@ -36,7 +81,20 @@ export default function ChatHud({ micOn, onMicChange, onOrbState, onBusy }: Prop
 
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: "smooth" });
-  }, [turns, pending]);
+  }, [turns, pending, open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const t = window.setTimeout(() => inputRef.current?.focus(), 40);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.clearTimeout(t);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
 
   const finishSpeak = useCallback(() => {
     speakStop.current = null;
@@ -123,187 +181,211 @@ export default function ChatHud({ micOn, onMicChange, onOrbState, onBusy }: Prop
     }
   }, [micOn, supported]);
 
+  const statusLine = srError || hint || (micOn ? (interim || "Speak now") : "Enter to send");
+  const showListenChip = micOn && !open;
+
   return (
     <div
       className="jarvis-hud"
       onMouseDown={(e) => e.stopPropagation()}
-      style={{
-        position: "absolute",
-        left: "50%",
-        bottom: 108,
-        transform: "translateX(-50%)",
-        width: "min(560px, 94vw)",
-        zIndex: 22,
-        pointerEvents: "auto",
-        userSelect: "text",
-        fontFamily: "system-ui, sans-serif",
-      }}
     >
-      <div
-        style={{
-          background: "rgba(4, 8, 15, 0.72)",
-          border: `1px solid ${CYAN}33`,
-          borderRadius: 16,
-          boxShadow: `0 0 28px ${CYAN}14, 0 8px 28px rgba(0,0,0,0.45)`,
-          backdropFilter: "blur(16px)",
-          overflow: "hidden",
-        }}
-      >
-        {(turns.length > 0 || pending) && (
+      {open && (
         <div
-          ref={listRef}
-          className="jarvis-hud-log"
-          aria-live="polite"
-          style={{
-            overflowY: "auto",
-            padding: "10px 12px 6px",
-            display: "flex",
-            flexDirection: "column",
-            gap: 8,
-          }}
+          id="jarvis-chat-dock"
+          role="dialog"
+          aria-label="Jarvis chat"
+          className="jarvis-dock"
         >
-          {turns.map((t) => (
-            <div key={t.id} style={{ display: "flex", justifyContent: t.role === "user" ? "flex-end" : "flex-start" }}>
+          <div
+            style={{
+              background: "rgba(4, 8, 15, 0.82)",
+              border: `1px solid ${CYAN}33`,
+              borderRadius: 16,
+              boxShadow: `0 0 28px ${CYAN}14, 0 8px 28px rgba(0,0,0,0.45)`,
+              backdropFilter: "blur(16px)",
+              overflow: "hidden",
+              display: "flex",
+              flexDirection: "column",
+              maxHeight: "inherit",
+            }}
+          >
+            <div className="jarvis-dock-head">
+              <span>COMMS</span>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                aria-label="Close chat"
+                className="jarvis-dock-close"
+              >
+                <X size={16} strokeWidth={1.75} />
+              </button>
+            </div>
+
+            {(turns.length > 0 || pending) && (
               <div
-                dir="auto"
+                ref={listRef}
+                className="jarvis-hud-log"
+                aria-live="polite"
                 style={{
-                  maxWidth: "92%",
-                  padding: "7px 11px",
-                  borderRadius: t.role === "user" ? "12px 12px 4px 12px" : "12px 12px 12px 4px",
-                  fontSize: 13,
-                  lineHeight: 1.45,
-                  color: t.role === "user" ? "#041018" : "rgba(240,237,232,0.92)",
-                  background: t.role === "user" ? CYAN : "rgba(245,166,35,0.12)",
-                  border: t.role === "user" ? "none" : `1px solid ${GOLD}44`,
+                  overflowY: "auto",
+                  padding: "10px 12px 6px",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 8,
                 }}
               >
-                {t.content}
+                {turns.map((t) => (
+                  <div key={t.id} style={{ display: "flex", justifyContent: t.role === "user" ? "flex-end" : "flex-start" }}>
+                    <div
+                      dir="auto"
+                      style={{
+                        maxWidth: "92%",
+                        padding: "7px 11px",
+                        borderRadius: t.role === "user" ? "12px 12px 4px 12px" : "12px 12px 12px 4px",
+                        fontSize: 13,
+                        lineHeight: 1.45,
+                        color: t.role === "user" ? "#041018" : "rgba(240,237,232,0.92)",
+                        background: t.role === "user" ? CYAN : "rgba(245,166,35,0.12)",
+                        border: t.role === "user" ? "none" : `1px solid ${GOLD}44`,
+                      }}
+                    >
+                      {t.content}
+                    </div>
+                  </div>
+                ))}
+                {pending && (
+                  <div style={{ fontFamily: "var(--font-mono)", fontSize: 10, letterSpacing: "0.18em", color: CYAN, opacity: 0.8 }}>
+                    PROCESSING…
+                  </div>
+                )}
               </div>
+            )}
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                send(draft || interim);
+              }}
+              style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 10px 10px 12px" }}
+            >
+              <input
+                ref={inputRef}
+                value={draft || (micOn ? interim : "")}
+                onChange={(e) => setDraft(e.target.value)}
+                placeholder={micOn ? (interim || "Listening…") : "Message Jarvis…"}
+                aria-label="Message Jarvis"
+                dir="auto"
+                disabled={pending}
+                style={{
+                  flex: 1,
+                  minWidth: 0,
+                  background: "rgba(8,16,28,0.65)",
+                  border: `1px solid ${CYAN}2a`,
+                  borderRadius: 10,
+                  color: "#f0ede8",
+                  fontSize: 14,
+                  padding: "9px 12px",
+                  outline: "none",
+                }}
+              />
+
+              <button
+                type="submit"
+                disabled={pending || !(draft.trim() || interim.trim())}
+                aria-label="Send message"
+                style={{
+                  flex: "none",
+                  background: GOLD,
+                  color: "#1a1204",
+                  border: "none",
+                  borderRadius: 10,
+                  padding: "9px 13px",
+                  fontFamily: "var(--font-mono)",
+                  fontSize: "0.68rem",
+                  letterSpacing: "0.12em",
+                  textTransform: "uppercase",
+                  cursor: pending ? "wait" : "pointer",
+                  opacity: pending || !(draft.trim() || interim.trim()) ? 0.45 : 1,
+                }}
+              >
+                Send
+              </button>
+            </form>
+
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                padding: "0 12px 10px",
+                fontFamily: "var(--font-mono)",
+                fontSize: 9,
+                letterSpacing: "0.16em",
+                textTransform: "uppercase",
+                color: "rgba(240,237,232,0.4)",
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => setLang((l) => (l.startsWith("ar") ? "en-US" : "ar-SA"))}
+                style={{
+                  background: "none",
+                  border: `1px solid ${CYAN}33`,
+                  color: "inherit",
+                  borderRadius: 999,
+                  padding: "3px 8px",
+                  cursor: "pointer",
+                  letterSpacing: "0.14em",
+                }}
+              >
+                {lang.startsWith("ar") ? "AR mic" : "EN mic"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setVoiceOut((v) => !v)}
+                style={{
+                  background: "none",
+                  border: `1px solid ${GOLD}44`,
+                  color: voiceOut ? GOLD : "inherit",
+                  borderRadius: 999,
+                  padding: "3px 8px",
+                  cursor: "pointer",
+                }}
+              >
+                {voiceOut ? "Voice replies on" : "Voice replies off"}
+              </button>
+              <span style={{ marginLeft: "auto", textAlign: "right" }}>{statusLine}</span>
             </div>
-          ))}
-          {pending && (
-            <div style={{ fontFamily: "var(--font-mono)", fontSize: 10, letterSpacing: "0.18em", color: CYAN, opacity: 0.8 }}>
-              PROCESSING…
+          </div>
+        </div>
+      )}
+
+      <div className="jarvis-rail" role="toolbar" aria-label="Jarvis voice and chat">
+        <div className="jarvis-rail-slot">
+          <RailBtn
+            label={open ? "Close chat" : "Open chat"}
+            expanded={open}
+            controls={open ? "jarvis-chat-dock" : undefined}
+            onClick={() => setOpen((v) => !v)}
+            badge={!open && (turns.length > 0 || pending)}
+          >
+            <MessageSquare size={20} strokeWidth={1.7} />
+          </RailBtn>
+        </div>
+
+        <div className="jarvis-rail-slot">
+          {showListenChip && (
+            <div className="jarvis-listen-chip" aria-live="polite">
+              {pending ? "PROCESSING…" : interim || "Listening…"}
             </div>
           )}
-        </div>
-        )}
-
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            send(draft || interim);
-          }}
-          style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 10px 10px 12px" }}
-        >
-          <button
-            type="button"
-            aria-pressed={micOn}
-            aria-label={micOn ? "Disable microphone" : "Enable microphone"}
+          <RailBtn
+            label={micOn ? "Disable microphone" : "Enable microphone"}
+            pressed={micOn}
             onClick={() => onMicChange(!micOn)}
-            style={{
-              flex: "none",
-              fontFamily: "var(--font-mono)",
-              fontSize: "0.62rem",
-              letterSpacing: "0.14em",
-              textTransform: "uppercase",
-              color: micOn ? "#041018" : "rgba(240,237,232,0.85)",
-              background: micOn ? CYAN : "rgba(4,8,15,0.55)",
-              border: `1px solid ${CYAN}73`,
-              borderRadius: 999,
-              padding: "8px 11px",
-              cursor: "pointer",
-            }}
           >
-            {micOn ? "Mic on" : "Mic"}
-          </button>
-
-          <input
-            value={draft || (micOn ? interim : "")}
-            onChange={(e) => setDraft(e.target.value)}
-            placeholder={micOn ? (interim || "Listening…") : "Message Jarvis…"}
-            aria-label="Message Jarvis"
-            dir="auto"
-            disabled={pending}
-            style={{
-              flex: 1,
-              minWidth: 0,
-              background: "rgba(8,16,28,0.65)",
-              border: `1px solid ${CYAN}2a`,
-              borderRadius: 10,
-              color: "#f0ede8",
-              fontSize: 14,
-              padding: "9px 12px",
-              outline: "none",
-            }}
-          />
-
-          <button
-            type="submit"
-            disabled={pending || !(draft.trim() || interim.trim())}
-            aria-label="Send message"
-            style={{
-              flex: "none",
-              background: GOLD,
-              color: "#1a1204",
-              border: "none",
-              borderRadius: 10,
-              padding: "9px 13px",
-              fontFamily: "var(--font-mono)",
-              fontSize: "0.68rem",
-              letterSpacing: "0.12em",
-              textTransform: "uppercase",
-              cursor: pending ? "wait" : "pointer",
-              opacity: pending || !(draft.trim() || interim.trim()) ? 0.45 : 1,
-            }}
-          >
-            Send
-          </button>
-        </form>
-
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-            padding: "0 12px 10px",
-            fontFamily: "var(--font-mono)",
-            fontSize: 9,
-            letterSpacing: "0.16em",
-            textTransform: "uppercase",
-            color: "rgba(240,237,232,0.4)",
-          }}
-        >
-          <button
-            type="button"
-            onClick={() => setLang((l) => (l.startsWith("ar") ? "en-US" : "ar-SA"))}
-            style={{
-              background: "none",
-              border: `1px solid ${CYAN}33`,
-              color: "inherit",
-              borderRadius: 999,
-              padding: "3px 8px",
-              cursor: "pointer",
-              letterSpacing: "0.14em",
-            }}
-          >
-            {lang.startsWith("ar") ? "AR mic" : "EN mic"}
-          </button>
-          <button
-            type="button"
-            onClick={() => setVoiceOut((v) => !v)}
-            style={{
-              background: "none",
-              border: `1px solid ${GOLD}44`,
-              color: voiceOut ? GOLD : "inherit",
-              borderRadius: 999,
-              padding: "3px 8px",
-              cursor: "pointer",
-            }}
-          >
-            {voiceOut ? "Voice replies on" : "Voice replies off"}
-          </button>
-          <span style={{ marginLeft: "auto" }}>{srError || hint || (micOn ? "Speak now" : "Enter to send")}</span>
+            {micOn ? <Mic size={20} strokeWidth={1.7} /> : <MicOff size={20} strokeWidth={1.7} />}
+          </RailBtn>
         </div>
       </div>
     </div>
