@@ -5,7 +5,7 @@
  * (`/jarvis-hologram.png`), not the old procedural Three.js bust.
  * Modes from chat + mic only change glow / pulse intensity.
  * The upload was a truncated 1672×941 PNG; this file is the recovered
- * decodable scanlines (1672×319) served as a valid static asset.
+ * head crop (780×319, edge-faded) served as a valid static asset.
  */
 
 export type HologramMode = "idle" | "listening" | "thinking" | "speaking";
