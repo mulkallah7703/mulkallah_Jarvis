@@ -338,7 +338,7 @@ export default function ApexWorld() {
 
       {/* the core — provided hologram portrait (not the old particle bust);
           display-only; the tap disc below keeps agent nodes clickable */}
-      <div style={{ position: "absolute", left: "50%", top: "50%", width: "min(760px, 82vw)", height: "min(460px, 58vh)", transform: "translate(-50%, -52%)", zIndex: 3, pointerEvents: "none" }}>
+      <div style={{ position: "absolute", left: "50%", top: "50%", width: "min(880px, 90vw)", height: "min(280px, 36vh)", transform: "translate(-50%, -58%)", zIndex: 3, pointerEvents: "none" }}>
         <JarvisHologram
           mode={orbState === "thinking" ? "thinking" : orbState === "speaking" ? "speaking" : (micOn ? "listening" : "idle")}
           energy={Math.max(energy, orbState === "speaking" ? 0.55 : orbState === "thinking" ? 0.3 : 0)}

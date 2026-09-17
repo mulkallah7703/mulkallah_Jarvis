@@ -4,6 +4,8 @@
  * Center Jarvis hologram — the provided particle-portrait artwork
  * (`/jarvis-hologram.png`), not the old procedural Three.js bust.
  * Modes from chat + mic only change glow / pulse intensity.
+ * The upload was a truncated 1672×941 PNG; this file is the recovered
+ * decodable scanlines (1672×319) served as a valid static asset.
  */
 
 export type HologramMode = "idle" | "listening" | "thinking" | "speaking";
@@ -36,7 +38,7 @@ export default function JarvisHologram({
         src="/jarvis-hologram.png"
         alt=""
         width={1672}
-        height={941}
+        height={319}
         draggable={false}
       />
       <div className="jarvis-holo-scan" />
