@@ -184,3 +184,107 @@ body {
   .jarvis-dock { animation: none; }
   .jarvis-rail-btn { transition: none; }
 }
+
+/* ── Center hologram (provided portrait artwork) ── */
+.jarvis-holo {
+  --holo-energy: 0;
+  --holo-glow: 0.38;
+  --holo-opacity: 0.92;
+  --holo-amp: 7px;
+  --holo-dur: 5.6s;
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  animation: jarvisHoloFloat var(--holo-dur) ease-in-out infinite;
+}
+.jarvis-holo--listening {
+  --holo-glow: 0.56;
+  --holo-opacity: 0.96;
+  --holo-amp: 5px;
+  --holo-dur: 3.2s;
+}
+.jarvis-holo--thinking {
+  --holo-glow: 0.7;
+  --holo-opacity: 0.98;
+  --holo-amp: 4px;
+  --holo-dur: 2s;
+}
+.jarvis-holo--speaking {
+  --holo-glow: calc(0.74 + var(--holo-energy) * 0.26);
+  --holo-opacity: 1;
+  --holo-amp: 8px;
+  --holo-dur: 1.35s;
+}
+.jarvis-holo-bloom {
+  position: absolute;
+  inset: 12% 16%;
+  border-radius: 50%;
+  background: radial-gradient(
+    ellipse at 50% 46%,
+    rgba(0, 229, 255, calc(0.18 + var(--holo-energy) * 0.28 + var(--holo-glow) * 0.22)) 0%,
+    rgba(13, 170, 228, 0.08) 42%,
+    transparent 72%
+  );
+  filter: blur(22px);
+  pointer-events: none;
+}
+.jarvis-holo-art {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center center;
+  opacity: var(--holo-opacity);
+  mix-blend-mode: screen;
+  filter:
+    drop-shadow(0 0 18px rgba(0, 229, 255, calc(var(--holo-glow) * 0.85)))
+    drop-shadow(0 0 42px rgba(30, 200, 255, calc(var(--holo-glow) * 0.45)));
+  user-select: none;
+}
+.jarvis-holo-scan {
+  position: absolute;
+  inset: 12% 18%;
+  z-index: 2;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(0, 229, 255, 0.03) 0px,
+    rgba(0, 229, 255, 0.03) 1px,
+    transparent 1px,
+    transparent 4px
+  );
+  mix-blend-mode: screen;
+  opacity: calc(0.16 + var(--holo-energy) * 0.14);
+  -webkit-mask-image: radial-gradient(ellipse 70% 80% at 50% 55%, #000 40%, transparent 78%);
+  mask-image: radial-gradient(ellipse 70% 80% at 50% 55%, #000 40%, transparent 78%);
+}
+.jarvis-holo-scan::after {
+  content: "";
+  position: absolute;
+  left: 18%;
+  right: 18%;
+  height: 16%;
+  top: -20%;
+  background: linear-gradient(to bottom, transparent, rgba(0, 229, 255, 0.1), transparent);
+  animation: jarvisHoloSweep 6.4s ease-in-out infinite;
+}
+@keyframes jarvisHoloFloat {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(calc(var(--holo-amp) * -1)); }
+}
+@keyframes jarvisHoloSweep {
+  0% { transform: translateY(0); opacity: 0; }
+  12% { opacity: 0.7; }
+  88% { opacity: 0.55; }
+  100% { transform: translateY(520%); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .jarvis-holo,
+  .jarvis-holo-scan::after { animation: none; }
+}
