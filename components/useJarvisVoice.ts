@@ -38,7 +38,7 @@ export type CommandMarks = { commandFinal: number };
 const COMMAND_WINDOW_MS = 6000;
 const RESTART_RETRY_MS = 50;
 /** Let a same-breath command cancel the greeting, without waiting on a long phrase. */
-const WAKE_GREET_DELAY_MS = 140;
+const WAKE_GREET_DELAY_MS = 520;
 
 type RecCtor = new () => SpeechRec;
 type SpeechRec = {
@@ -204,15 +204,21 @@ export function useJarvisVoice({
     greetedRef.current = true;
   }, []);
 
+  const greetNow = useCallback(() => {
+    if (greetedRef.current || commandLock.current || pausedRef.current || !commandModeRef.current) return;
+    window.clearTimeout(greetTimer.current);
+    greetTimer.current = 0;
+    greetedRef.current = true;
+    onGreetRef.current?.();
+  }, []);
+
   const scheduleGreet = useCallback(() => {
     if (greetedRef.current || greetTimer.current || commandLock.current) return;
     greetTimer.current = window.setTimeout(() => {
       greetTimer.current = 0;
-      if (greetedRef.current || commandLock.current || pausedRef.current || !commandModeRef.current) return;
-      greetedRef.current = true;
-      onGreetRef.current?.();
+      greetNow();
     }, WAKE_GREET_DELAY_MS);
-  }, []);
+  }, [greetNow]);
 
   const armCommandWindow = useCallback(() => {
     window.clearTimeout(windowTimer.current);
@@ -299,7 +305,7 @@ export function useJarvisVoice({
 
   const handleTranscript = useCallback(
     (committedPiece: string, interimPiece: string, sawFinal: boolean) => {
-      if (commandLock.current || pausedRef.current) return;
+      if (commandLock.current || pausedRef.current || !enabledRef.current) return;
 
       if (committedPiece) lastRawRef.current = committedPiece;
       else if (interimPiece) lastRawRef.current = interimPiece;
@@ -315,7 +321,8 @@ export function useJarvisVoice({
         if (!manualRef.current && hit && !command) {
           window.clearTimeout(silenceTimer.current);
           setInterim("");
-          scheduleGreet();
+          if (sawFinal) greetNow();
+          else scheduleGreet();
           return;
         }
         const payload = hit ? command : haystack;
@@ -340,9 +347,12 @@ export function useJarvisVoice({
       }
       wakeHitAtRef.current = performance.now();
       enterCommandMode(command, sawFinal && Boolean(command));
-      if (!command) scheduleGreet();
+      if (!command) {
+        if (sawFinal) greetNow();
+        else scheduleGreet();
+      }
     },
-    [cancelGreet, enterCommandMode, fireCommand, publishDebug, scheduleGreet],
+    [cancelGreet, enterCommandMode, fireCommand, greetNow, publishDebug, scheduleGreet],
   );
 
   const handleTranscriptRef = useRef(handleTranscript);
