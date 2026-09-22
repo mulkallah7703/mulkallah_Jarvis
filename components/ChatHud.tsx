@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { MessageSquare, Mic, MicOff, X } from "lucide-react";
 import type { OrbState } from "./orb-state";
-import { matchWake } from "@/lib/wake-phrase";
+import { matchWake, WAKE_GREETING } from "@/lib/wake-phrase";
 import { speechSupported } from "./useSpeechInput";
 import { useJarvisTts, type TtsEngine } from "./useJarvisTts";
 import { useJarvisVoice, type MicPermission, type VoiceDebug, type VoicePhase } from "./useJarvisVoice";
@@ -115,6 +115,7 @@ export default function ChatHud({
   const [lang, setLang] = useState("en-US");
   const [hint, setHint] = useState<string | null>(null);
   const [srOk, setSrOk] = useState(false);
+  const [srChecked, setSrChecked] = useState(false);
   const [voiceHold, setVoiceHold] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -138,6 +139,7 @@ export default function ChatHud({
 
   useEffect(() => {
     setSrOk(speechSupported());
+    setSrChecked(true);
   }, []);
 
   useEffect(() => {
@@ -342,10 +344,17 @@ export default function ChatHud({
   sendRef.current = send;
 
   const voice = useJarvisVoice({
-    manual: micOn,
+    enabled: micOn,
+    manual: false,
     paused: pending || tts.isSpeaking || voiceHold || !srOk,
     commandLang: lang,
     onCommand: (text, marks) => sendRef.current(text, marks),
+    onGreet: () => {
+      const engine = ttsRef.current;
+      if (!engine || engine.isMuted || pendingRef.current) return;
+      engine.prime();
+      void engine.speak(WAKE_GREETING, { energetic: true });
+    },
     onPhase: (p) => {
       onVoicePhase?.(p);
       if (pendingRef.current || ttsRef.current?.isSpeaking) return;
@@ -354,7 +363,6 @@ export default function ChatHud({
     },
     onDenied: (message) => setHint(message),
     onPermission: onVoicePermission,
-    onReleaseManual: () => onMicChange(false),
     onDebug: onVoiceDebug,
   });
 
@@ -363,10 +371,25 @@ export default function ChatHud({
   }, [onVoiceArmed, voice.armed]);
 
   useEffect(() => {
-    if (micOn && !voice.supported) {
+    const prime = () => ttsRef.current?.prime();
+    window.addEventListener("pointerdown", prime, true);
+    window.addEventListener("keydown", prime, true);
+    return () => {
+      window.removeEventListener("pointerdown", prime, true);
+      window.removeEventListener("keydown", prime, true);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!srChecked) return;
+    if (micOn && !srOk) {
       setHint("This browser has no speech recognition — type instead. Chrome / Edge / Safari work best.");
+      return;
     }
-  }, [micOn, voice.supported]);
+    setHint((current) =>
+      current?.startsWith("This browser has no speech recognition") ? null : current,
+    );
+  }, [srChecked, micOn, srOk]);
 
   const commandListen =
     !pending &&
@@ -637,8 +660,9 @@ export default function ChatHud({
             pressed={micOn}
             onClick={() => {
               tts.prime();
-              voice.unlock();
-              onMicChange(!micOn);
+              const next = !micOn;
+              onMicChange(next);
+              if (next) voice.unlock(true);
             }}
           >
             {micOn ? <Mic size={20} strokeWidth={1.7} /> : <MicOff size={20} strokeWidth={1.7} />}

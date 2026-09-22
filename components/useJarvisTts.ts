@@ -200,7 +200,7 @@ export function useJarvisTts(opts: Opts = {}) {
   }, []);
 
   const speakLocal = useCallback(
-    (text: string, gen: number) => {
+    (text: string, gen: number, energetic = false) => {
       if (typeof window === "undefined" || !window.speechSynthesis) {
         optsRef.current.onError?.();
         endPlayback(gen);
@@ -216,7 +216,8 @@ export function useJarvisTts(opts: Opts = {}) {
       utter.lang = lang === "ar" ? "ar-SA" : "en-US";
       const voice = pickLocalVoice(text);
       if (voice) utter.voice = voice;
-      utter.rate = 1.02;
+      utter.rate = energetic ? 1.12 : 1.02;
+      utter.pitch = energetic ? 1.18 : 1;
       utter.onend = () => {
         if (gen !== genRef.current) return;
         endPlayback(gen);
@@ -320,7 +321,8 @@ export function useJarvisTts(opts: Opts = {}) {
   );
 
   const speak = useCallback(
-    async (raw: string) => {
+    async (raw: string, speakOpts?: { energetic?: boolean }) => {
+      const energetic = Boolean(speakOpts?.energetic);
       const prepared = prepareSpeechText(raw);
       if (!prepared) {
         optsRef.current.onEnd?.();
@@ -351,7 +353,7 @@ export function useJarvisTts(opts: Opts = {}) {
       optsRef.current.onStart?.();
 
       if (elDeadRef.current) {
-        speakLocal(prepared, gen);
+        speakLocal(prepared, gen, energetic);
         return;
       }
 
@@ -365,13 +367,13 @@ export function useJarvisTts(opts: Opts = {}) {
         if (gen !== genRef.current) return;
         if (!res.ok) {
           elDeadRef.current = true;
-          speakLocal(prepared, gen);
+          speakLocal(prepared, gen, energetic);
           return;
         }
         const buf = await res.blob();
         if (gen !== genRef.current) return;
         if (!buf.size) {
-          speakLocal(prepared, gen);
+          speakLocal(prepared, gen, energetic);
           return;
         }
         if (urlRef.current && urlRef.current !== lastUrlRef.current) {
@@ -384,7 +386,7 @@ export function useJarvisTts(opts: Opts = {}) {
         await playUrl(url, gen);
       } catch {
         if (gen !== genRef.current) return;
-        speakLocal(prepared, gen);
+        speakLocal(prepared, gen, energetic);
       }
     },
     [halt, markEngine, playUrl, prime, speakLocal],
