@@ -371,10 +371,14 @@ export default function ChatHud({
           finishSpeak();
         }
         return true;
-      } catch {
+      } catch (err) {
+        const raw = err instanceof Error ? err.message : "";
+        const msg = /API key|not configured|could not reach/i.test(raw)
+          ? "Jarvis brain is offline — add GEMINI_API_KEY or OPENAI_API_KEY on the server, then redeploy."
+          : "Network error — Jarvis is unreachable.";
         setTurns((prev) => [
           ...prev,
-          { id: `e-${Date.now()}`, role: "assistant", content: "Network error — Jarvis is unreachable." },
+          { id: `e-${Date.now()}`, role: "assistant", content: msg },
         ]);
         finishSpeak();
         setPending(false);
