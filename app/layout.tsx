@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Mulkallah Jarvis — Holographic AI Assistant",
+  title: "JARVIS — The AI That Has Attitude",
   description:
-    "Custom holographic Jarvis UI built on the open APEX-UI framework, with an original particle humanoid face.",
+    "مساعدك الذكي... بس عنده شخصية. A holographic voice-and-text AI assistant by Mulk Allah.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

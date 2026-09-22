@@ -4,56 +4,99 @@
 
 * { box-sizing: border-box; }
 
-html, body { margin: 0; padding: 0; }
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: #000;
+  overflow: hidden;
+}
 
 body {
-  background: #04080f;
-  color: #f0ede8;
+  color: #e8f4ff;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 
-/* Screen-reader-only content (used by the accessible agent list). */
-.visually-hidden {
-  position: absolute !important;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
+.jarvis-stage {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  min-height: 100dvh;
   overflow: hidden;
-  clip: rect(0 0 0 0);
-  white-space: nowrap;
-  border: 0;
+  background: #000;
+  color: #e8f4ff;
 }
 
-/* ── Overview lamp panel: pinned to the top-left, out of document flow ──
-   Without position:fixed the panel takes layout height and pushes the world
-   down (leaving a black band at the top). */
-.apex-overview {
-  position: fixed;
-  top: 10px;
+.jarvis-hologram-canvas {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  object-fit: contain;
+  object-position: center center;
+  background: #000;
+  cursor: crosshair;
+}
+
+.jarvis-brand {
+  position: absolute;
+  top: max(14px, env(safe-area-inset-top));
+  left: 18px;
+  z-index: 20;
+  pointer-events: none;
+  text-shadow: 0 0 18px rgba(0, 229, 255, 0.35);
+}
+
+.jarvis-brand-name {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.42em;
+  color: rgba(0, 229, 255, 0.92);
+}
+
+.jarvis-brand-tag {
+  margin-top: 6px;
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  color: rgba(232, 244, 255, 0.78);
+}
+
+.jarvis-brand-ar {
+  margin-top: 4px;
+  font-size: 0.72rem;
+  color: rgba(232, 244, 255, 0.5);
+}
+
+.jarvis-status {
+  position: absolute;
   left: 0;
-  width: 540px;
-  max-width: 92vw;
-  z-index: 30;
-}
-@media (max-width: 1000px) {
-  .apex-overview {
-    position: absolute;
-    top: 10px;
-    width: 100%;
-  }
-}
-
-/* Agent-node breathing (ReasoningWeb). */
-@keyframes agentPulse {
-  0%, 100% { transform: scale(1); }
-  50%      { transform: scale(1.06); }
+  right: 0;
+  bottom: max(18px, env(safe-area-inset-bottom));
+  z-index: 20;
+  pointer-events: none;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.42em;
+  color: rgba(0, 229, 255, 0.55);
 }
 
-/* Status-bar hint is hidden on small screens. */
-@media (max-width: 700px) {
-  .sb-hint { display: none; }
+.jarvis-voice-debug {
+  position: absolute;
+  left: max(12px, env(safe-area-inset-left));
+  bottom: max(48px, calc(env(safe-area-inset-bottom) + 36px));
+  z-index: 24;
+  pointer-events: none;
+  margin: 0;
+  max-width: min(420px, calc(100vw - 96px));
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  line-height: 1.45;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(0, 229, 255, 0.55);
+  white-space: pre-wrap;
 }
 
 .jarvis-hud {
@@ -65,11 +108,11 @@ body {
   font-family: system-ui, sans-serif;
 }
 .jarvis-hud input::placeholder {
-  color: rgba(240, 237, 232, 0.38);
+  color: rgba(232, 244, 255, 0.38);
 }
 .jarvis-rail {
   position: absolute;
-  right: 16px;
+  right: max(16px, env(safe-area-inset-right));
   top: 48%;
   transform: translateY(-40%);
   display: flex;
@@ -111,13 +154,14 @@ body {
   background: #f5a623;
   box-shadow: 0 0 8px #f5a623;
 }
-.jarvis-listen-chip {
+.jarvis-listen-chip,
+.jarvis-enable-chip {
   position: absolute;
   right: 58px;
-  max-width: min(220px, calc(100vw - 96px));
+  max-width: min(260px, calc(100vw - 96px));
   padding: 7px 11px;
   border-radius: 999px;
-  background: rgba(4, 8, 15, 0.78);
+  background: rgba(0, 0, 0, 0.78);
   border: 1px solid rgba(0, 229, 255, 0.35);
   box-shadow: 0 0 16px rgba(0, 229, 255, 0.18);
   backdrop-filter: blur(12px);
@@ -129,7 +173,13 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.jarvis-listen-chip {
   pointer-events: none;
+}
+.jarvis-enable-chip {
+  pointer-events: auto;
+  cursor: pointer;
 }
 .jarvis-dock {
   position: absolute;
@@ -137,7 +187,7 @@ body {
   top: 48%;
   transform: translateY(-42%);
   width: min(400px, calc(100% - 96px));
-  max-height: min(68vh, 520px);
+  max-height: min(58vh, 480px);
   z-index: 23;
   pointer-events: auto;
   animation: jarvisDockIn 0.22s ease-out;
@@ -168,18 +218,46 @@ body {
   color: rgba(255, 255, 255, 0.8);
 }
 .jarvis-hud-log {
-  max-height: min(38vh, 280px);
+  max-height: min(34vh, 240px);
   overflow-y: auto;
 }
 @keyframes jarvisDockIn {
   from { opacity: 0; transform: translateY(-42%) translateX(16px); }
   to   { opacity: 1; transform: translateY(-42%) translateX(0); }
 }
+
 @media (max-width: 700px) {
-  .jarvis-hud-log { max-height: min(32vh, 200px); }
-  .jarvis-rail { right: 10px; }
-  .jarvis-dock { right: 66px; width: min(400px, calc(100% - 80px)); }
+  .jarvis-brand {
+    left: 12px;
+    right: 72px;
+  }
+  .jarvis-status {
+    bottom: max(76px, calc(env(safe-area-inset-bottom) + 64px));
+  }
+  .jarvis-hud-log { max-height: min(22vh, 160px); }
+  .jarvis-rail {
+    top: auto;
+    bottom: max(14px, env(safe-area-inset-bottom));
+    transform: none;
+    flex-direction: row-reverse;
+    right: max(12px, env(safe-area-inset-right));
+  }
+  .jarvis-dock {
+    top: auto;
+    bottom: max(72px, calc(env(safe-area-inset-bottom) + 60px));
+    right: 12px;
+    left: 12px;
+    width: auto;
+    transform: none;
+    max-height: 34vh;
+    animation: jarvisDockInMobile 0.22s ease-out;
+  }
+  @keyframes jarvisDockInMobile {
+    from { opacity: 0; transform: translateY(12px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
 }
+
 @media (prefers-reduced-motion: reduce) {
   .jarvis-dock { animation: none; }
   .jarvis-rail-btn { transition: none; }

@@ -2,20 +2,56 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { MessageSquare, Mic, MicOff, X } from "lucide-react";
-import type { OrbState } from "./ApexHeroOrb";
-import { speakText, speechSupported, useSpeechInput } from "./useSpeechInput";
+import type { OrbState } from "./orb-state";
+import { matchWake } from "@/lib/wake-phrase";
+import { speechSupported } from "./useSpeechInput";
+import { useJarvisTts, type TtsEngine } from "./useJarvisTts";
+import { useJarvisVoice, type MicPermission, type VoiceDebug, type VoicePhase } from "./useJarvisVoice";
 
 const CYAN = "#00e5ff";
 const GOLD = "#f5a623";
 
 type Turn = { id: string; role: "user" | "assistant"; content: string };
 
+export type ChatMetrics = {
+  command: string;
+  commandFinal: number | null;
+  requestStart: number | null;
+  firstResponse: number | null;
+  responseComplete: number | null;
+  ttsStart: number | null;
+  model: string;
+  provider: string;
+};
+
 type Props = {
   micOn: boolean;
   onMicChange: (on: boolean) => void;
   onOrbState: (s: OrbState) => void;
   onBusy: (busy: boolean) => void;
+  onVoiceEnergy?: (value: number) => void;
+  onVoicePhase?: (phase: VoicePhase) => void;
+  onVoicePermission?: (permission: MicPermission) => void;
+  onTtsEngine?: (engine: TtsEngine) => void;
+  onVoiceArmed?: (armed: boolean) => void;
+  onVoiceDebug?: (debug: VoiceDebug) => void;
+  onChatMetrics?: (metrics: ChatMetrics) => void;
 };
+
+function splitReady(text: string, final: boolean): { ready: string[]; leftover: string } {
+  const ready: string[] = [];
+  let rest = text;
+  while (rest) {
+    const index = rest.search(/[.!?؟]/);
+    if (index < 0) break;
+    const end = index + 1;
+    if (!final && end >= rest.length) break;
+    const sentence = rest.slice(0, end).trim();
+    if (sentence) ready.push(sentence);
+    rest = rest.slice(end).trim();
+  }
+  return { ready, leftover: rest };
+}
 
 function RailBtn({
   label,
@@ -59,21 +95,46 @@ function RailBtn({
   );
 }
 
-export default function ChatHud({ micOn, onMicChange, onOrbState, onBusy }: Props) {
+export default function ChatHud({
+  micOn,
+  onMicChange,
+  onOrbState,
+  onBusy,
+  onVoiceEnergy,
+  onVoicePhase,
+  onVoicePermission,
+  onTtsEngine,
+  onVoiceArmed,
+  onVoiceDebug,
+  onChatMetrics,
+}: Props) {
   const [open, setOpen] = useState(false);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [draft, setDraft] = useState("");
   const [pending, setPending] = useState(false);
-  const [voiceOut, setVoiceOut] = useState(true);
   const [lang, setLang] = useState("en-US");
   const [hint, setHint] = useState<string | null>(null);
   const [srOk, setSrOk] = useState(false);
-  const [muteMic, setMuteMic] = useState(false);
+  const [voiceHold, setVoiceHold] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const pendingRef = useRef(false);
-  const speakStop = useRef<(() => void) | null>(null);
-  const sendRef = useRef<(text: string) => void>(() => {});
+  const sendRef = useRef<(text: string, marks?: { commandFinal?: number }) => void>(() => {});
+  const pendingSpeechRef = useRef("");
+  const ttsRef = useRef<ReturnType<typeof useJarvisTts> | null>(null);
+
+  const finishSpeak = useCallback(() => {
+    const more = pendingSpeechRef.current.trim();
+    const tts = ttsRef.current;
+    if (more && tts) {
+      pendingSpeechRef.current = "";
+      void tts.speak(more);
+      return;
+    }
+    onBusy(false);
+    onOrbState("idle");
+    setVoiceHold(false);
+  }, [onBusy, onOrbState]);
 
   useEffect(() => {
     setSrOk(speechSupported());
@@ -96,22 +157,30 @@ export default function ChatHud({ micOn, onMicChange, onOrbState, onBusy }: Prop
     };
   }, [open]);
 
-  const finishSpeak = useCallback(() => {
-    speakStop.current = null;
-    onBusy(false);
-    onOrbState("idle");
-    window.setTimeout(() => setMuteMic(false), 450);
-  }, [onBusy, onOrbState]);
+  const tts = useJarvisTts({
+    onStart: () => onOrbState("speaking"),
+    onEnd: finishSpeak,
+    onBlocked: () =>
+      setHint("Tap Replay to hear Jarvis — this browser blocked autoplay."),
+    onError: () => setHint("Voice unavailable — the reply is still on screen."),
+    onIntensity: onVoiceEnergy,
+    onEngine: onTtsEngine,
+  });
+  ttsRef.current = tts;
 
   const send = useCallback(
-    async (raw: string) => {
-      const text = raw.trim();
-      if (!text || pendingRef.current) return;
+    async (raw: string, marks?: { commandFinal?: number }) => {
+      const rawText = raw.trim();
+      const woken = matchWake(rawText);
+      const text = woken.hit ? woken.command : rawText;
+      if (!text || pendingRef.current || !ttsRef.current) return;
       pendingRef.current = true;
       setPending(true);
-      setMuteMic(true);
+      setVoiceHold(true);
       onBusy(true);
-      speakStop.current?.();
+      pendingSpeechRef.current = "";
+      ttsRef.current?.prime();
+      ttsRef.current?.interrupt();
       if (typeof window !== "undefined") window.speechSynthesis?.cancel();
       onOrbState("thinking");
       setDraft("");
@@ -119,39 +188,143 @@ export default function ChatHud({ micOn, onMicChange, onOrbState, onBusy }: Prop
 
       const user: Turn = { id: `u-${Date.now()}`, role: "user", content: text };
       const history = [...turns, user].slice(-16);
+      const assistantId = `a-${Date.now()}`;
       setTurns(history);
+
+      const requestStart = performance.now();
+      const metrics: ChatMetrics = {
+        command: text,
+        commandFinal: marks?.commandFinal ?? requestStart,
+        requestStart,
+        firstResponse: null,
+        responseComplete: null,
+        ttsStart: null,
+        model: "",
+        provider: "",
+      };
+      onChatMetrics?.({ ...metrics });
+
+      const speakStarted = { current: false };
+      const startSpeech = (chunk: string) => {
+        if (!ttsRef.current || ttsRef.current.isMuted || speakStarted.current || !chunk.trim()) return;
+        speakStarted.current = true;
+        metrics.ttsStart = performance.now();
+        onChatMetrics?.({ ...metrics });
+        void ttsRef.current.speak(chunk);
+      };
 
       try {
         const res = await fetch("/api/chat", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "text/event-stream",
+          },
           body: JSON.stringify({
+            stream: true,
             messages: history.map((t) => ({ role: t.role, content: t.content })),
           }),
         });
-        const data = (await res.json()) as { text?: string; error?: string };
-        if (!res.ok || !data.text) {
-          const msg =
-            res.status === 503
-              ? "Jarvis brain is offline — add GEMINI_API_KEY or OPENAI_API_KEY on the server, then redeploy."
-              : data.error || "Jarvis could not reply.";
-          setTurns((prev) => [...prev, { id: `e-${Date.now()}`, role: "assistant", content: msg }]);
-          finishSpeak();
+
+        const ctype = res.headers.get("content-type") || "";
+        if (!ctype.includes("text/event-stream")) {
+          const data = (await res.json()) as { text?: string; error?: string; model?: string; provider?: string };
+          if (!res.ok || !data.text) {
+            const msg =
+              res.status === 503
+                ? "Jarvis brain is offline — add GEMINI_API_KEY or OPENAI_API_KEY on the server, then redeploy."
+                : data.error || "Jarvis could not reply.";
+            setTurns((prev) => [...prev, { id: `e-${Date.now()}`, role: "assistant", content: msg }]);
+            finishSpeak();
+            setPending(false);
+            pendingRef.current = false;
+            return;
+          }
+          metrics.firstResponse = performance.now();
+          metrics.responseComplete = metrics.firstResponse;
+          metrics.model = data.model || "";
+          metrics.provider = data.provider || "";
+          setTurns((prev) => [...prev, { id: assistantId, role: "assistant", content: data.text ?? "" }]);
           setPending(false);
           pendingRef.current = false;
+          onChatMetrics?.({ ...metrics });
+          if (!ttsRef.current?.isMuted) startSpeech(data.text ?? "");
+          else finishSpeak();
           return;
         }
 
-        const reply = data.text;
-        setTurns((prev) => [...prev, { id: `a-${Date.now()}`, role: "assistant", content: reply }]);
+        if (!res.body) throw new Error("empty stream");
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let acc = "";
+        let visible = "";
+        let rest = "";
+        let lineBuf = "";
+
+        const pushVisible = (next: string) => {
+          visible = next;
+          setTurns((prev) => {
+            const without = prev.filter((t) => t.id !== assistantId);
+            return [...without, { id: assistantId, role: "assistant", content: visible }];
+          });
+        };
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          lineBuf += decoder.decode(value, { stream: true });
+          const lines = lineBuf.split("\n");
+          lineBuf = lines.pop() ?? "";
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith("data:")) continue;
+            const payload = trimmed.slice(5).trim();
+            if (!payload) continue;
+            const event = JSON.parse(payload) as {
+              type?: string;
+              text?: string;
+              model?: string;
+              provider?: string;
+              error?: string;
+            };
+            if (event.type === "meta") {
+              metrics.model = event.model || "";
+              metrics.provider = event.provider || "";
+            } else if (event.type === "delta" && event.text) {
+              if (metrics.firstResponse == null) {
+                metrics.firstResponse = performance.now();
+                onChatMetrics?.({ ...metrics });
+              }
+              acc += event.text;
+              pushVisible(acc);
+              rest += event.text;
+              const { ready, leftover } = splitReady(rest, false);
+              rest = leftover;
+              for (const sentence of ready) {
+                if (!speakStarted.current) startSpeech(sentence);
+                else pendingSpeechRef.current = `${pendingSpeechRef.current} ${sentence}`.trim();
+              }
+            } else if (event.type === "done" && event.text) {
+              acc = event.text;
+              pushVisible(acc);
+              metrics.responseComplete = performance.now();
+              metrics.model = event.model || metrics.model;
+              metrics.provider = event.provider || metrics.provider;
+            } else if (event.type === "error") {
+              throw new Error(event.error || "Chat failed.");
+            }
+          }
+        }
+
         setPending(false);
         pendingRef.current = false;
-
-        if (voiceOut) {
-          speakStop.current = speakText(reply, lang, () => onOrbState("speaking"), finishSpeak);
+        onChatMetrics?.({ ...metrics });
+        const leftover = rest.trim();
+        if (!ttsRef.current?.isMuted) {
+          if (!speakStarted.current) startSpeech((leftover || acc).trim());
+          else if (leftover) pendingSpeechRef.current = `${pendingSpeechRef.current} ${leftover}`.trim();
         } else {
-          onOrbState("speaking");
-          window.setTimeout(finishSpeak, Math.min(2200, 600 + reply.length * 18));
+          finishSpeak();
         }
       } catch {
         setTurns((prev) => [
@@ -163,26 +336,51 @@ export default function ChatHud({ micOn, onMicChange, onOrbState, onBusy }: Prop
         pendingRef.current = false;
       }
     },
-    [turns, onBusy, onOrbState, voiceOut, lang, finishSpeak],
+    [turns, onBusy, onOrbState, finishSpeak, onChatMetrics],
   );
 
   sendRef.current = send;
 
-  const { supported, interim, error: srError } = useSpeechInput(
-    micOn,
-    pending || muteMic || !srOk,
-    lang,
-    (text) => sendRef.current(text),
-  );
+  const voice = useJarvisVoice({
+    manual: micOn,
+    paused: pending || tts.isSpeaking || voiceHold || !srOk,
+    commandLang: lang,
+    onCommand: (text, marks) => sendRef.current(text, marks),
+    onPhase: (p) => {
+      onVoicePhase?.(p);
+      if (pendingRef.current || ttsRef.current?.isSpeaking) return;
+      if (p === "listening_for_command" || p === "waking") onOrbState("listening");
+      else if (p === "listening_for_wake" || p === "standby") onOrbState("idle");
+    },
+    onDenied: (message) => setHint(message),
+    onPermission: onVoicePermission,
+    onReleaseManual: () => onMicChange(false),
+    onDebug: onVoiceDebug,
+  });
 
   useEffect(() => {
-    if (micOn && !supported) {
+    onVoiceArmed?.(voice.armed);
+  }, [onVoiceArmed, voice.armed]);
+
+  useEffect(() => {
+    if (micOn && !voice.supported) {
       setHint("This browser has no speech recognition — type instead. Chrome / Edge / Safari work best.");
     }
-  }, [micOn, supported]);
+  }, [micOn, voice.supported]);
 
-  const statusLine = srError || hint || (micOn ? (interim || "Speak now") : "Enter to send");
-  const showListenChip = micOn && !open;
+  const commandListen =
+    !pending &&
+    !tts.isSpeaking &&
+    (voice.phase === "listening_for_command" || voice.phase === "waking");
+  const statusLine =
+    hint ||
+    (voice.needsEnable
+      ? "Voice ready — tap once to enable"
+      : commandListen
+        ? voice.interim || "Listening…"
+        : "Enter to send");
+  const showListenChip = commandListen && !open;
+  const showEnableChip = voice.needsEnable && !open && !pending;
 
   return (
     <div
@@ -264,15 +462,17 @@ export default function ChatHud({ micOn, onMicChange, onOrbState, onBusy }: Prop
             <form
               onSubmit={(e) => {
                 e.preventDefault();
-                send(draft || interim);
+                tts.prime();
+                voice.unlock();
+                send(draft || voice.interim);
               }}
               style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 10px 10px 12px" }}
             >
               <input
                 ref={inputRef}
-                value={draft || (micOn ? interim : "")}
+                value={draft || (commandListen ? voice.interim : "")}
                 onChange={(e) => setDraft(e.target.value)}
-                placeholder={micOn ? (interim || "Listening…") : "Message Jarvis…"}
+                placeholder={commandListen ? (voice.interim || "Listening…") : "Message Jarvis…"}
                 aria-label="Message Jarvis"
                 dir="auto"
                 disabled={pending}
@@ -291,7 +491,7 @@ export default function ChatHud({ micOn, onMicChange, onOrbState, onBusy }: Prop
 
               <button
                 type="submit"
-                disabled={pending || !(draft.trim() || interim.trim())}
+                disabled={pending || !(draft.trim() || voice.interim.trim())}
                 aria-label="Send message"
                 style={{
                   flex: "none",
@@ -305,7 +505,7 @@ export default function ChatHud({ micOn, onMicChange, onOrbState, onBusy }: Prop
                   letterSpacing: "0.12em",
                   textTransform: "uppercase",
                   cursor: pending ? "wait" : "pointer",
-                  opacity: pending || !(draft.trim() || interim.trim()) ? 0.45 : 1,
+                  opacity: pending || !(draft.trim() || voice.interim.trim()) ? 0.45 : 1,
                 }}
               >
                 Send
@@ -342,17 +542,54 @@ export default function ChatHud({ micOn, onMicChange, onOrbState, onBusy }: Prop
               </button>
               <button
                 type="button"
-                onClick={() => setVoiceOut((v) => !v)}
+                onClick={() => tts.setMuted(!tts.isMuted)}
                 style={{
                   background: "none",
                   border: `1px solid ${GOLD}44`,
-                  color: voiceOut ? GOLD : "inherit",
+                  color: tts.isMuted ? "inherit" : GOLD,
                   borderRadius: 999,
                   padding: "3px 8px",
                   cursor: "pointer",
                 }}
               >
-                {voiceOut ? "Voice replies on" : "Voice replies off"}
+                {tts.isMuted ? "Voice Off" : "Voice On"}
+              </button>
+              <button
+                type="button"
+                onClick={() => tts.stop()}
+                disabled={!tts.isSpeaking}
+                aria-label="Stop speaking"
+                style={{
+                  background: "none",
+                  border: `1px solid ${CYAN}33`,
+                  color: "inherit",
+                  borderRadius: 999,
+                  padding: "3px 8px",
+                  cursor: tts.isSpeaking ? "pointer" : "default",
+                  opacity: tts.isSpeaking ? 1 : 0.35,
+                }}
+              >
+                Stop
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  tts.prime();
+                  void tts.replay();
+                }}
+                disabled={!tts.hasLast || tts.isMuted}
+                aria-label="Replay last reply"
+                style={{
+                  background: "none",
+                  border: `1px solid ${CYAN}33`,
+                  color: "inherit",
+                  borderRadius: 999,
+                  padding: "3px 8px",
+                  cursor: tts.hasLast && !tts.isMuted ? "pointer" : "default",
+                  opacity: tts.hasLast && !tts.isMuted ? 1 : 0.35,
+                }}
+              >
+                Replay
               </button>
               <span style={{ marginLeft: "auto", textAlign: "right" }}>{statusLine}</span>
             </div>
@@ -366,7 +603,11 @@ export default function ChatHud({ micOn, onMicChange, onOrbState, onBusy }: Prop
             label={open ? "Close chat" : "Open chat"}
             expanded={open}
             controls={open ? "jarvis-chat-dock" : undefined}
-            onClick={() => setOpen((v) => !v)}
+            onClick={() => {
+              tts.prime();
+              voice.unlock();
+              setOpen((v) => !v);
+            }}
             badge={!open && (turns.length > 0 || pending)}
           >
             <MessageSquare size={20} strokeWidth={1.7} />
@@ -374,15 +615,31 @@ export default function ChatHud({ micOn, onMicChange, onOrbState, onBusy }: Prop
         </div>
 
         <div className="jarvis-rail-slot">
+          {showEnableChip && (
+            <button
+              type="button"
+              className="jarvis-enable-chip"
+              onClick={() => {
+                tts.prime();
+                voice.unlock();
+              }}
+            >
+              Voice ready — tap once to enable
+            </button>
+          )}
           {showListenChip && (
             <div className="jarvis-listen-chip" aria-live="polite">
-              {pending ? "PROCESSING…" : interim || "Listening…"}
+              {voice.interim || "Listening…"}
             </div>
           )}
           <RailBtn
             label={micOn ? "Disable microphone" : "Enable microphone"}
             pressed={micOn}
-            onClick={() => onMicChange(!micOn)}
+            onClick={() => {
+              tts.prime();
+              voice.unlock();
+              onMicChange(!micOn);
+            }}
           >
             {micOn ? <Mic size={20} strokeWidth={1.7} /> : <MicOff size={20} strokeWidth={1.7} />}
           </RailBtn>

@@ -9,16 +9,15 @@ export type ChatTurn = { role: "user" | "assistant"; content: string };
 export const JARVIS_SYSTEM = `You are Jarvis, a holographic AI assistant for Mulkallah.
 Be concise, capable, and lightly witty — a personal operator, not a corporate chatbot.
 Reply in Arabic when the user writes Arabic; otherwise reply in English.
-Keep answers short unless the user asks for depth. No markdown tables. No secret leakage.`;
+For ordinary spoken questions, answer in 1–3 short sentences. Do not pad. No markdown tables. No secret leakage.`;
 
 const GEMINI_MODELS = [
-  "gemini-2.5-flash",
-  "gemini-2.0-flash",
-  "gemini-flash-latest",
-  "gemini-2.0-flash-lite",
+  { id: "gemini-3.5-flash-lite", timeoutMs: 8000 },
 ];
 
-const OPENAI_MODELS = ["gpt-4o-mini", "gpt-4.1-mini"];
+const OPENAI_MODELS = [
+  { id: "gpt-4o-mini", timeoutMs: 8000 },
+];
 
 export function geminiKey(): string | undefined {
   return process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY || undefined;
@@ -45,17 +44,23 @@ function openaiText(data: unknown): string {
   return (d?.choices?.[0]?.message?.content ?? "").trim();
 }
 
+function geminiBody(turns: ChatTurn[]) {
+  return {
+    systemInstruction: { parts: [{ text: JARVIS_SYSTEM }] },
+    contents: turns.map((m) => ({
+      role: m.role === "assistant" ? "model" : "user",
+      parts: [{ text: m.content }],
+    })),
+    generationConfig: { temperature: 0.6, maxOutputTokens: 512 },
+  };
+}
+
 async function callGemini(
   model: string,
   key: string,
   turns: ChatTurn[],
-  signal: AbortSignal,
+  timeoutMs: number,
 ): Promise<string> {
-  const contents = turns.map((m) => ({
-    role: m.role === "assistant" ? "model" : "user",
-    parts: [{ text: m.content }],
-  }));
-
   const res = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
     {
@@ -64,20 +69,12 @@ async function callGemini(
         "Content-Type": "application/json",
         "x-goog-api-key": key,
       },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: JARVIS_SYSTEM }] },
-        contents,
-        generationConfig: { temperature: 0.7, maxOutputTokens: 1024 },
-      }),
-      signal,
+      body: JSON.stringify(geminiBody(turns)),
+      signal: AbortSignal.timeout(timeoutMs),
     },
   );
-
-  if (!res.ok) {
-    throw new Error(`gemini ${model} ${res.status}`);
-  }
-  const data: unknown = await res.json();
-  const text = geminiText(data);
+  if (!res.ok) throw new Error(`gemini ${model} ${res.status}`);
+  const text = geminiText(await res.json());
   if (!text) throw new Error(`gemini ${model} empty`);
   return text;
 }
@@ -86,7 +83,7 @@ async function callOpenAI(
   model: string,
   key: string,
   turns: ChatTurn[],
-  signal: AbortSignal,
+  timeoutMs: number,
 ): Promise<string> {
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -96,36 +93,32 @@ async function callOpenAI(
     },
     body: JSON.stringify({
       model,
-      temperature: 0.7,
-      max_tokens: 1024,
+      temperature: 0.6,
+      max_tokens: 512,
       messages: [{ role: "system", content: JARVIS_SYSTEM }, ...turns],
     }),
-    signal,
+    signal: AbortSignal.timeout(timeoutMs),
   });
-
-  if (!res.ok) {
-    throw new Error(`openai ${model} ${res.status}`);
-  }
-  const data: unknown = await res.json();
-  const text = openaiText(data);
+  if (!res.ok) throw new Error(`openai ${model} ${res.status}`);
+  const text = openaiText(await res.json());
   if (!text) throw new Error(`openai ${model} empty`);
   return text;
 }
 
 export async function completeChat(
   turns: ChatTurn[],
-): Promise<{ text: string; provider: "gemini" | "openai" }> {
+): Promise<{ text: string; provider: "gemini" | "openai"; model: string; ms: number }> {
   const gKey = geminiKey();
   const oKey = openaiKey();
-  const signal = AbortSignal.timeout(22_000);
+  const t0 = Date.now();
 
   if (gKey) {
     for (const model of GEMINI_MODELS) {
       try {
-        const text = await callGemini(model, gKey, turns, signal);
-        return { text, provider: "gemini" };
+        const text = await callGemini(model.id, gKey, turns, model.timeoutMs);
+        return { text, provider: "gemini", model: model.id, ms: Date.now() - t0 };
       } catch {
-        /* try next Gemini model, then OpenAI */
+        /* next model */
       }
     }
   }
@@ -133,10 +126,10 @@ export async function completeChat(
   if (oKey) {
     for (const model of OPENAI_MODELS) {
       try {
-        const text = await callOpenAI(model, oKey, turns, signal);
-        return { text, provider: "openai" };
+        const text = await callOpenAI(model.id, oKey, turns, model.timeoutMs);
+        return { text, provider: "openai", model: model.id, ms: Date.now() - t0 };
       } catch {
-        /* try next OpenAI model */
+        /* next model */
       }
     }
   }
@@ -145,4 +138,25 @@ export async function completeChat(
     throw Object.assign(new Error("No LLM API keys configured on the server."), { status: 503 });
   }
   throw Object.assign(new Error("Jarvis could not reach Gemini or OpenAI."), { status: 502 });
+}
+
+export type ChatStreamEvent =
+  | { type: "meta"; provider: "gemini" | "openai"; model: string }
+  | { type: "delta"; text: string }
+  | { type: "done"; text: string; provider: "gemini" | "openai"; model: string; ms: number };
+
+export async function completeChatStream(
+  turns: ChatTurn[],
+  emit: (event: ChatStreamEvent) => void,
+): Promise<void> {
+  const result = await completeChat(turns);
+  emit({ type: "meta", provider: result.provider, model: result.model });
+  emit({ type: "delta", text: result.text });
+  emit({
+    type: "done",
+    text: result.text,
+    provider: result.provider,
+    model: result.model,
+    ms: result.ms,
+  });
 }
