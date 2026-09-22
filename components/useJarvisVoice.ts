@@ -4,9 +4,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   COMMAND_SILENCE_MS,
   createWakeBuffer,
-  matchWake,
   normalizeSpeech,
 } from "@/lib/wake-phrase";
+import {
+  decideTranscript,
+  modeAfter,
+  type ListenMode,
+} from "@/lib/voice-session";
 
 export type VoicePhase =
   | "standby"
@@ -31,14 +35,20 @@ export type VoiceDebug = {
   wakeLatencyMs: number | null;
   command: string;
   commandFinal: number | null;
+  session: "open" | "wake";
 };
 
 export type CommandMarks = { commandFinal: number };
 
-const COMMAND_WINDOW_MS = 6000;
-const RESTART_RETRY_MS = 50;
-/** Let a same-breath command cancel the greeting, without waiting on a long phrase. */
-const WAKE_GREET_DELAY_MS = 520;
+const RESTART_RETRY_MS = 30;
+/**
+ * Bare "mulk" often finalizes before the rest of the same sentence.
+ * Hold the greeting just long enough to catch that tail, then speak.
+ * A wake that already includes the command never waits.
+ */
+const WAKE_GREET_DELAY_MS = 340;
+const GREET_COOLDOWN_MS = 2200;
+const ECHO_GUARD_MS = 220;
 
 type RecCtor = new () => SpeechRec;
 type SpeechRec = {
@@ -73,7 +83,8 @@ type Opts = {
   paused: boolean;
   commandLang: string;
   onCommand: (text: string, marks?: CommandMarks) => void;
-  onGreet?: () => void;
+  /** Return true when greeting speech actually started. */
+  onGreet?: () => boolean | void;
   onPhase?: (phase: VoicePhase) => void;
   onDenied?: (message: string) => void;
   onPermission?: (permission: MicPermission) => void;
@@ -115,13 +126,16 @@ export function useJarvisVoice({
   const commandModeRef = useRef(false);
   const commandLock = useRef(false);
   const silenceTimer = useRef(0);
-  const windowTimer = useRef(0);
   const restartTimer = useRef(0);
   const greetTimer = useRef(0);
   const greetedRef = useRef(false);
+  const greetedAtRef = useRef(0);
+  const echoUntilRef = useRef(0);
   const gestureNeededRef = useRef(false);
   const grantFromQueryRef = useRef(false);
   const buffer = useRef(createWakeBuffer());
+  const pendingCommandRef = useRef("");
+  const spokenRef = useRef<string[]>([]);
   const lastRawRef = useRef("");
   const lastWakeRef = useRef<"none" | "detected">("none");
   const lastCommandRef = useRef("");
@@ -165,6 +179,11 @@ export function useJarvisVoice({
     onPermissionRef.current?.(next);
   }, []);
 
+  const applyMode = useCallback((event: "mute" | "unmute" | "wake" | "command" | "reply-done") => {
+    const current: ListenMode = commandModeRef.current ? "session" : "wake";
+    commandModeRef.current = modeAfter(current, event) === "session";
+  }, []);
+
   const publishDebug = useCallback(() => {
     onDebugRef.current?.({
       mode: phaseRef.current,
@@ -172,22 +191,21 @@ export function useJarvisVoice({
       mic: permissionRef.current,
       lastRaw: lastRawRef.current,
       buffer: buffer.current.text(),
-      normalized: normalizeSpeech(buffer.current.text()),
+      normalized: normalizeSpeech(buffer.current.text() || pendingCommandRef.current),
       wake: lastWakeRef.current,
       wakePhrase: lastWakeRef.current === "detected" ? "Mulk Allah" : "",
       wakeLatencyMs: wakeLatencyRef.current,
       command: lastCommandRef.current,
       commandFinal: commandFinalRef.current,
+      session: commandModeRef.current ? "open" : "wake",
     });
   }, []);
 
   const clearTimers = useCallback(() => {
     window.clearTimeout(silenceTimer.current);
-    window.clearTimeout(windowTimer.current);
     window.clearTimeout(restartTimer.current);
     window.clearTimeout(greetTimer.current);
     silenceTimer.current = 0;
-    windowTimer.current = 0;
     restartTimer.current = 0;
     greetTimer.current = 0;
   }, []);
@@ -202,54 +220,99 @@ export function useJarvisVoice({
     window.clearTimeout(greetTimer.current);
     greetTimer.current = 0;
     greetedRef.current = true;
+    greetedAtRef.current = performance.now();
   }, []);
 
+  const noteSpoken = useCallback((text: string) => {
+    const clean = text.trim();
+    if (!clean) return;
+    spokenRef.current = [clean, ...spokenRef.current].slice(0, 4);
+  }, []);
+
+  const enterSession = useCallback(() => {
+    applyMode("wake");
+    lastWakeRef.current = "detected";
+    const hitAt = wakeHitAtRef.current || performance.now();
+    wakeLatencyRef.current = Math.max(0, Math.round(performance.now() - hitAt));
+    buffer.current.reset();
+    if (phaseRef.current !== "listening_for_command") {
+      setPhaseSafe("waking");
+      requestAnimationFrame(() => {
+        if (commandModeRef.current && !commandLock.current && phaseRef.current === "waking") {
+          setPhaseSafe("listening_for_command");
+          publishDebug();
+        }
+      });
+    }
+    publishDebug();
+  }, [applyMode, publishDebug, setPhaseSafe]);
+
   const greetNow = useCallback(() => {
-    if (greetedRef.current || commandLock.current || pausedRef.current || !commandModeRef.current) return;
+    if (commandLock.current || pausedRef.current || !commandModeRef.current) return;
+    if (greetedRef.current && performance.now() - greetedAtRef.current < GREET_COOLDOWN_MS) return;
     window.clearTimeout(greetTimer.current);
     greetTimer.current = 0;
     greetedRef.current = true;
-    onGreetRef.current?.();
-  }, []);
+    greetedAtRef.current = performance.now();
+    pausedRef.current = true;
+    runningRef.current = false;
+    startingRef.current = false;
+    try {
+      recRef.current?.stop();
+    } catch {
+      /* ignore */
+    }
+    setRunning(false);
+    let accepted = false;
+    try {
+      accepted = onGreetRef.current?.() === true;
+    } catch {
+      accepted = false;
+    }
+    if (!accepted) {
+      pausedRef.current = false;
+      if (wantRef.current && enabledRef.current) startRecRef.current();
+    }
+    publishDebug();
+  }, [publishDebug]);
 
   const scheduleGreet = useCallback(() => {
-    if (greetedRef.current || greetTimer.current || commandLock.current) return;
+    if (commandLock.current) return;
+    if (greetedRef.current && performance.now() - greetedAtRef.current < GREET_COOLDOWN_MS) return;
+    window.clearTimeout(greetTimer.current);
     greetTimer.current = window.setTimeout(() => {
       greetTimer.current = 0;
       greetNow();
     }, WAKE_GREET_DELAY_MS);
   }, [greetNow]);
 
-  const armCommandWindow = useCallback(() => {
-    window.clearTimeout(windowTimer.current);
-    windowTimer.current = window.setTimeout(() => {
-      if (!commandModeRef.current || commandLock.current) return;
-      commandModeRef.current = false;
-      lastWakeRef.current = "none";
-      buffer.current.reset();
-      resetGreet();
-      setInterim("");
-      if (manualRef.current) onReleaseManualRef.current?.();
-      else setPhaseSafe("listening_for_wake");
-      publishDebug();
-    }, COMMAND_WINDOW_MS);
-  }, [publishDebug, resetGreet, setPhaseSafe]);
-
   const fireCommand = useCallback(
     (text: string) => {
       const trimmed = text.trim();
       if (!trimmed || commandLock.current) return;
+      const gates = {
+        mode: "session" as const,
+        muted: false,
+        armed: true,
+        echoGuard: performance.now() < echoUntilRef.current,
+        recentSpoken: spokenRef.current,
+      };
+      const verdict = decideTranscript(gates, trimmed, true);
+      if (verdict.type !== "command") return;
       commandLock.current = true;
-      commandModeRef.current = false;
+      applyMode("command");
       cancelGreet();
-      lastCommandRef.current = trimmed;
+      lastCommandRef.current = verdict.text;
       lastWakeRef.current = "detected";
       const commandFinal = performance.now();
       commandFinalRef.current = commandFinal;
+      pendingCommandRef.current = "";
       buffer.current.reset();
-      clearTimers();
+      window.clearTimeout(silenceTimer.current);
+      window.clearTimeout(greetTimer.current);
+      silenceTimer.current = 0;
+      greetTimer.current = 0;
       setInterim("");
-      setPhaseSafe("standby");
       pausedRef.current = true;
       runningRef.current = false;
       startingRef.current = false;
@@ -259,49 +322,21 @@ export function useJarvisVoice({
         /* ignore */
       }
       setRunning(false);
-      if (manualRef.current) onReleaseManualRef.current?.();
       publishDebug();
-      onCommandRef.current(trimmed, { commandFinal });
+      onCommandRef.current(verdict.text, { commandFinal });
     },
-    [cancelGreet, clearTimers, publishDebug, setPhaseSafe],
+    [applyMode, cancelGreet, publishDebug],
   );
 
-  const enterCommandMode = useCallback(
-    (extracted: string, isFinal: boolean) => {
-      const hitAt = wakeHitAtRef.current || performance.now();
-      lastWakeRef.current = "detected";
-      commandModeRef.current = true;
-      buffer.current.reset();
-      setPhaseSafe("waking");
-      wakeLatencyRef.current = Math.max(0, Math.round(performance.now() - hitAt));
-      const promote = () => {
-        if (commandModeRef.current && !commandLock.current && phaseRef.current === "waking") {
-          setPhaseSafe("listening_for_command");
-          wakeLatencyRef.current = Math.max(0, Math.round(performance.now() - hitAt));
-          publishDebug();
-        }
-      };
-      requestAnimationFrame(promote);
-      publishDebug();
-
-      if (extracted) {
-        if (isFinal) {
-          fireCommand(extracted);
-          return;
-        }
-        setInterim(extracted);
-        window.clearTimeout(silenceTimer.current);
-        silenceTimer.current = window.setTimeout(() => {
-          if (extracted.trim() && commandModeRef.current) fireCommand(extracted);
-        }, COMMAND_SILENCE_MS);
-      } else {
-        setInterim("");
-      }
-
-      armCommandWindow();
-    },
-    [armCommandWindow, fireCommand, publishDebug, setPhaseSafe],
-  );
+  const armSilence = useCallback(() => {
+    window.clearTimeout(silenceTimer.current);
+    silenceTimer.current = window.setTimeout(() => {
+      silenceTimer.current = 0;
+      const text = pendingCommandRef.current.trim();
+      pendingCommandRef.current = "";
+      if (text) fireCommand(text);
+    }, COMMAND_SILENCE_MS);
+  }, [fireCommand]);
 
   const handleTranscript = useCallback(
     (committedPiece: string, interimPiece: string, sawFinal: boolean) => {
@@ -314,45 +349,54 @@ export function useJarvisVoice({
         ? buffer.current.pushFinal(committedPiece)
         : buffer.current.setInterim(interimPiece);
 
+      const decision = decideTranscript(
+        {
+          mode: manualRef.current || commandModeRef.current ? "session" : "wake",
+          muted: false,
+          armed: armedRef.current,
+          echoGuard: performance.now() < echoUntilRef.current,
+          recentSpoken: spokenRef.current,
+        },
+        haystack,
+        sawFinal,
+      );
       publishDebug();
 
-      if (manualRef.current || commandModeRef.current) {
-        const { hit, command } = matchWake(haystack);
-        if (!manualRef.current && hit && !command) {
-          window.clearTimeout(silenceTimer.current);
-          setInterim("");
-          if (sawFinal) greetNow();
-          else scheduleGreet();
-          return;
-        }
-        const payload = hit ? command : haystack;
-        if (payload) cancelGreet();
-        if (!sawFinal) {
-          setInterim(payload || haystack);
-          window.clearTimeout(silenceTimer.current);
-          silenceTimer.current = window.setTimeout(() => {
-            const leftover = (payload || haystack).trim();
-            if (leftover && (manualRef.current || commandModeRef.current)) fireCommand(leftover);
-          }, COMMAND_SILENCE_MS);
-          return;
-        }
-        if (payload) fireCommand(payload);
+      if (decision.type === "ignore") {
+        buffer.current.reset();
+        if (!commandModeRef.current) setInterim("");
         return;
       }
 
-      const { hit, command } = matchWake(haystack);
-      if (!hit) {
-        if (!sawFinal) setInterim("");
+      if (decision.type === "wake-only") {
+        if (!commandModeRef.current) {
+          wakeHitAtRef.current = performance.now();
+          enterSession();
+        }
+        buffer.current.reset();
+        pendingCommandRef.current = "";
+        window.clearTimeout(silenceTimer.current);
+        setInterim("");
+        scheduleGreet();
         return;
       }
-      wakeHitAtRef.current = performance.now();
-      enterCommandMode(command, sawFinal && Boolean(command));
-      if (!command) {
-        if (sawFinal) greetNow();
-        else scheduleGreet();
+
+      if (!commandModeRef.current) {
+        wakeHitAtRef.current = performance.now();
+        enterSession();
       }
+      cancelGreet();
+      buffer.current.reset();
+      pendingCommandRef.current = decision.text;
+      if (!decision.final) {
+        setInterim(decision.text);
+        armSilence();
+        return;
+      }
+      window.clearTimeout(silenceTimer.current);
+      fireCommand(decision.text);
     },
-    [cancelGreet, enterCommandMode, fireCommand, greetNow, publishDebug, scheduleGreet],
+    [armSilence, cancelGreet, enterSession, fireCommand, publishDebug, scheduleGreet],
   );
 
   const handleTranscriptRef = useRef(handleTranscript);
@@ -426,6 +470,7 @@ export function useJarvisVoice({
     }
 
     try {
+      recRef.current.lang = "en-US";
       recRef.current.start();
       startingRef.current = false;
       runningRef.current = true;
@@ -537,19 +582,20 @@ export function useJarvisVoice({
     const resumed = wasPausedRef.current && !paused && active;
     wasPausedRef.current = paused;
     wantRef.current = active;
+    if (resumed) echoUntilRef.current = performance.now() + ECHO_GUARD_MS;
     if (!active) {
       commandLock.current = false;
-      if (paused && commandModeRef.current) {
-        window.clearTimeout(windowTimer.current);
-        windowTimer.current = 0;
-      }
       if (!paused && !enabled) {
-        commandModeRef.current = false;
+        applyMode("mute");
         resetGreet();
         buffer.current.reset();
+        pendingCommandRef.current = "";
       }
       setInterim("");
-      if (phaseRef.current === "listening_for_command" || phaseRef.current === "waking") {
+      if (
+        !commandModeRef.current &&
+        (phaseRef.current === "listening_for_command" || phaseRef.current === "waking")
+      ) {
         setPhaseSafe(permission === "denied" ? "error" : "standby");
       } else if (!paused && !enabled && permission !== "denied") {
         setPhaseSafe("standby");
@@ -558,18 +604,15 @@ export function useJarvisVoice({
       return;
     }
     commandLock.current = false;
-    if (manual) {
-      commandModeRef.current = true;
+    if (manual || commandModeRef.current) {
+      if (manual) applyMode("command");
       setPhaseSafe("listening_for_command");
-    } else if (!commandModeRef.current) {
+    } else {
       resetGreet();
       setPhaseSafe("listening_for_wake");
-    } else {
-      setPhaseSafe("listening_for_command");
-      if (resumed) armCommandWindow();
     }
     startRecRef.current();
-  }, [supported, enabled, armed, paused, permission, manual, armCommandWindow, resetGreet, setPhaseSafe, softStop]);
+  }, [supported, enabled, armed, paused, permission, manual, applyMode, resetGreet, setPhaseSafe, softStop]);
 
   useEffect(() => {
     if (!supported || permission === "denied") return;
@@ -643,5 +686,6 @@ export function useJarvisVoice({
     running,
     needsEnable: supported && enabled && !armed && permission !== "denied",
     unlock,
+    noteSpoken,
   };
 }

@@ -27,6 +27,7 @@ const EMPTY_DEBUG: VoiceDebug = {
   wakeLatencyMs: null,
   command: "",
   commandFinal: null,
+  session: "wake",
 };
 
 export default function JarvisStage() {
@@ -120,6 +121,7 @@ RECOGNITION: ${voiceDebug.recognition.toUpperCase()}
 LAST RAW: ${voiceDebug.lastRaw || "—"}
 NORMALIZED: ${voiceDebug.normalized || "—"}
 WAKE: ${voiceDebug.wake === "detected" ? voiceDebug.wakePhrase || "Mulk Allah" : "NONE"}
+SESSION: ${voiceDebug.session === "open" ? "OPEN" : "WAKE"}
 WAKE LATENCY: ${voiceDebug.wakeLatencyMs == null ? "—" : `${voiceDebug.wakeLatencyMs}ms`}
 COMMAND: ${voiceDebug.command || metrics?.command || "—"}
 COMMAND → REQUEST: ${cmdToReqMs == null ? "—" : `${cmdToReqMs}ms`}

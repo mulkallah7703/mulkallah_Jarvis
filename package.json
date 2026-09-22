@@ -8,7 +8,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "check:voice": "node --experimental-strip-types --import ./lib/resolve-ts-register.mjs lib/voice-session.check.mts"
   },
   "dependencies": {
     "next": "15.3.8",

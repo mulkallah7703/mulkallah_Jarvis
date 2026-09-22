@@ -1,8 +1,13 @@
 /** Local wake-phrase helpers. Never call the LLM from here. */
 
 export const WAKE_PHRASE = "Mulk Allah";
-/** Interim-only command flush. Final results submit immediately. */
-export const COMMAND_SILENCE_MS = 80;
+/**
+ * Stable-interim flush. Chrome often waits ~0.7–1.2s to mark a result final;
+ * submitting the latest interim after a short quiet beats that without cutting
+ * off mid-phrase (80ms was short enough to fire on gaps between interim events).
+ * Final results still submit immediately.
+ */
+export const COMMAND_SILENCE_MS = 280;
 
 const MULK = "mulk|milk|mulck|molk|merca|merka|merk|mulc|\u0645\u0644\u0643";
 /** Bare wake. Close mishears of "mulk" only — not common words like milk/merk. */
@@ -58,6 +63,19 @@ export function matchWake(text: string): { hit: boolean; command: string } {
     }
   }
   return { hit: true, command };
+}
+
+/** Wake phrase only when it leads the utterance. Keeps "tell me about mulk" intact. */
+export function leadingWake(text: string): { hit: boolean; command: string } {
+  let command = text.trim();
+  let hit = false;
+  for (let i = 0; i < 4 && command; i++) {
+    const next = stripWake(command);
+    if (!next.hit || !next.atStart) break;
+    hit = true;
+    command = next.command;
+  }
+  return hit ? { hit: true, command } : { hit: false, command: "" };
 }
 
 /** Finals append; current interim replaces. Matches Chrome SpeechRecognition. */

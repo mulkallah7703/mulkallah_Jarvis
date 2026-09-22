@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { MessageSquare, Mic, MicOff, X } from "lucide-react";
 import type { OrbState } from "./orb-state";
-import { matchWake, WAKE_GREETING } from "@/lib/wake-phrase";
+import { leadingWake, WAKE_GREETING } from "@/lib/wake-phrase";
+import { bareWake } from "@/lib/voice-session";
 import { speechSupported } from "./useSpeechInput";
 import { useJarvisTts, type TtsEngine } from "./useJarvisTts";
 import { useJarvisVoice, type MicPermission, type VoiceDebug, type VoicePhase } from "./useJarvisVoice";
@@ -37,6 +38,22 @@ type Props = {
   onVoiceDebug?: (debug: VoiceDebug) => void;
   onChatMetrics?: (metrics: ChatMetrics) => void;
 };
+
+/** First speakable slice so TTS can start before the rest of the reply arrives. */
+function takeFirstChunk(text: string): { chunk: string; rest: string } | null {
+  const trimmed = text.trim();
+  if (trimmed.length < 2) return null;
+  const match = trimmed.match(/^[\s\S]*?[.!?؟](?=\s|$)/);
+  if (match && match[0].trim().length >= 2) {
+    return { chunk: match[0].trim(), rest: trimmed.slice(match[0].length).trim() };
+  }
+  if (trimmed.length >= 80) {
+    const cut = trimmed.lastIndexOf(",", 90);
+    const idx = cut > 24 ? cut + 1 : 80;
+    return { chunk: trimmed.slice(0, idx).trim(), rest: trimmed.slice(idx).trim() };
+  }
+  return null;
+}
 
 function splitReady(text: string, final: boolean): { ready: string[]; leftover: string } {
   const ready: string[] = [];
@@ -120,8 +137,11 @@ export default function ChatHud({
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const pendingRef = useRef(false);
-  const sendRef = useRef<(text: string, marks?: { commandFinal?: number }) => void>(() => {});
+  const sendRef = useRef<(text: string, marks?: { commandFinal?: number }) => Promise<boolean>>(
+    async () => false,
+  );
   const pendingSpeechRef = useRef("");
+  const noteSpokenRef = useRef<(text: string) => void>(() => {});
   const ttsRef = useRef<ReturnType<typeof useJarvisTts> | null>(null);
 
   const finishSpeak = useCallback(() => {
@@ -129,6 +149,7 @@ export default function ChatHud({
     const tts = ttsRef.current;
     if (more && tts) {
       pendingSpeechRef.current = "";
+      noteSpokenRef.current(more);
       void tts.speak(more);
       return;
     }
@@ -173,9 +194,10 @@ export default function ChatHud({
   const send = useCallback(
     async (raw: string, marks?: { commandFinal?: number }) => {
       const rawText = raw.trim();
-      const woken = matchWake(rawText);
-      const text = woken.hit ? woken.command : rawText;
-      if (!text || pendingRef.current || !ttsRef.current) return;
+      if (bareWake(rawText) || pendingRef.current || !ttsRef.current) return false;
+      const leading = leadingWake(rawText);
+      const text = leading.hit && leading.command ? leading.command : rawText;
+      if (!text) return false;
       pendingRef.current = true;
       setPending(true);
       setVoiceHold(true);
@@ -189,7 +211,7 @@ export default function ChatHud({
       setHint(null);
 
       const user: Turn = { id: `u-${Date.now()}`, role: "user", content: text };
-      const history = [...turns, user].slice(-16);
+      const history = [...turns, user].slice(-6);
       const assistantId = `a-${Date.now()}`;
       setTurns(history);
 
@@ -212,6 +234,7 @@ export default function ChatHud({
         speakStarted.current = true;
         metrics.ttsStart = performance.now();
         onChatMetrics?.({ ...metrics });
+        noteSpokenRef.current(chunk);
         void ttsRef.current.speak(chunk);
       };
 
@@ -224,7 +247,10 @@ export default function ChatHud({
           },
           body: JSON.stringify({
             stream: true,
-            messages: history.map((t) => ({ role: t.role, content: t.content })),
+            messages: history.map((t, i) => ({
+              role: t.role,
+              content: i === history.length - 1 ? t.content.slice(0, 2000) : t.content.slice(0, 500),
+            })),
           }),
         });
 
@@ -240,7 +266,7 @@ export default function ChatHud({
             finishSpeak();
             setPending(false);
             pendingRef.current = false;
-            return;
+            return true;
           }
           metrics.firstResponse = performance.now();
           metrics.responseComplete = metrics.firstResponse;
@@ -252,7 +278,7 @@ export default function ChatHud({
           onChatMetrics?.({ ...metrics });
           if (!ttsRef.current?.isMuted) startSpeech(data.text ?? "");
           else finishSpeak();
-          return;
+          return true;
         }
 
         if (!res.body) throw new Error("empty stream");
@@ -300,14 +326,27 @@ export default function ChatHud({
               acc += event.text;
               pushVisible(acc);
               rest += event.text;
-              const { ready, leftover } = splitReady(rest, false);
-              rest = leftover;
-              for (const sentence of ready) {
-                if (!speakStarted.current) startSpeech(sentence);
-                else pendingSpeechRef.current = `${pendingSpeechRef.current} ${sentence}`.trim();
+              if (!speakStarted.current) {
+                const taken = takeFirstChunk(rest);
+                if (taken) {
+                  startSpeech(taken.chunk);
+                  rest = taken.rest;
+                  const queued = splitReady(rest, false);
+                  rest = queued.leftover;
+                  for (const sentence of queued.ready) {
+                    pendingSpeechRef.current = `${pendingSpeechRef.current} ${sentence}`.trim();
+                  }
+                }
+              } else {
+                const { ready, leftover } = splitReady(rest, false);
+                rest = leftover;
+                for (const sentence of ready) {
+                  pendingSpeechRef.current = `${pendingSpeechRef.current} ${sentence}`.trim();
+                }
               }
             } else if (event.type === "done" && event.text) {
               acc = event.text;
+              noteSpokenRef.current(acc);
               pushVisible(acc);
               metrics.responseComplete = performance.now();
               metrics.model = event.model || metrics.model;
@@ -323,11 +362,15 @@ export default function ChatHud({
         onChatMetrics?.({ ...metrics });
         const leftover = rest.trim();
         if (!ttsRef.current?.isMuted) {
-          if (!speakStarted.current) startSpeech((leftover || acc).trim());
-          else if (leftover) pendingSpeechRef.current = `${pendingSpeechRef.current} ${leftover}`.trim();
+          if (!speakStarted.current) {
+            const line = (leftover || acc).trim();
+            if (line) startSpeech(line);
+            else finishSpeak();
+          } else if (leftover) pendingSpeechRef.current = `${pendingSpeechRef.current} ${leftover}`.trim();
         } else {
           finishSpeak();
         }
+        return true;
       } catch {
         setTurns((prev) => [
           ...prev,
@@ -336,6 +379,7 @@ export default function ChatHud({
         finishSpeak();
         setPending(false);
         pendingRef.current = false;
+        return true;
       }
     },
     [turns, onBusy, onOrbState, finishSpeak, onChatMetrics],
@@ -348,12 +392,21 @@ export default function ChatHud({
     manual: false,
     paused: pending || tts.isSpeaking || voiceHold || !srOk,
     commandLang: lang,
-    onCommand: (text, marks) => sendRef.current(text, marks),
+    onCommand: (text, marks) => {
+      if (pendingRef.current) return;
+      setVoiceHold(true);
+      void sendRef.current(text, marks).then((owned) => {
+        if (!owned) setVoiceHold(false);
+      });
+    },
     onGreet: () => {
       const engine = ttsRef.current;
-      if (!engine || engine.isMuted || pendingRef.current) return;
+      if (!engine || engine.isMuted || pendingRef.current) return false;
+      setVoiceHold(true);
+      noteSpokenRef.current(WAKE_GREETING);
       engine.prime();
       void engine.speak(WAKE_GREETING, { energetic: true });
+      return true;
     },
     onPhase: (p) => {
       onVoicePhase?.(p);
@@ -365,6 +418,8 @@ export default function ChatHud({
     onPermission: onVoicePermission,
     onDebug: onVoiceDebug,
   });
+
+  noteSpokenRef.current = voice.noteSpoken;
 
   useEffect(() => {
     onVoiceArmed?.(voice.armed);
