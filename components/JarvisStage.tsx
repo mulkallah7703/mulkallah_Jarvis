@@ -30,7 +30,7 @@ const EMPTY_DEBUG: VoiceDebug = {
 };
 
 export default function JarvisStage() {
-  const [micOn, setMicOn] = useState(false);
+  const [micOn, setMicOn] = useState(true);
   const [showState, setShowState] = useState<OrbState>("idle");
   const [voiceEnergy, setVoiceEnergy] = useState(0);
   const [voicePhase, setVoicePhase] = useState<VoicePhase>("standby");
